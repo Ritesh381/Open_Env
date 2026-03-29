@@ -61,3 +61,9 @@ def test_required_endpoints():
     # Baseline can return cache (200) or service unavailable when cache is absent and
     # no API key is configured for a live refresh run.
     assert baseline.status_code in (200, 503)
+    if baseline.status_code == 200:
+        baseline_body = baseline.json()
+        assert "provider" in baseline_body
+        assert "model" in baseline_body
+        assert "seed" in baseline_body
+        assert "temperature" in baseline_body

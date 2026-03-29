@@ -37,6 +37,16 @@ def _default_task_ids() -> List[str]:
     return task_ids
 
 
+def _normalize_baseline_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Ensure baseline response always exposes reproducibility metadata fields."""
+    payload.setdefault("provider", "unknown")
+    payload.setdefault("model", "unknown")
+    payload.setdefault("seed", None)
+    payload.setdefault("temperature", None)
+    payload.setdefault("task_ids", _default_task_ids())
+    return payload
+
+
 class GraderRequest(BaseModel):
     """Request contract for deterministic standalone grading."""
     task_id: str = Field(description="Task identifier to use for grading")
@@ -70,7 +80,7 @@ async def get_baseline_scores(
     # Fast path: cached baseline artifact
     if not refresh and _baseline_cache_file.exists():
         with open(_baseline_cache_file, "r", encoding="utf-8") as f:
-            payload = json.load(f)
+            payload = _normalize_baseline_payload(json.load(f))
         payload["source"] = "cache"
         return payload
 
@@ -87,7 +97,7 @@ async def get_baseline_scores(
     if not os.getenv(provider_env_key):
         if _baseline_cache_file.exists():
             with open(_baseline_cache_file, "r", encoding="utf-8") as f:
-                payload = json.load(f)
+                payload = _normalize_baseline_payload(json.load(f))
             payload["source"] = "cache_fallback_missing_api_key"
             return payload
         raise HTTPException(
@@ -106,6 +116,7 @@ async def get_baseline_scores(
     results = baseline.run_evaluation(task_ids)
     results["provider"] = provider
     results["task_ids"] = task_ids
+    results = _normalize_baseline_payload(results)
 
     with open(_baseline_cache_file, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2)

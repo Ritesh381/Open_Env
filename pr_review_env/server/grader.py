@@ -4,6 +4,7 @@ Grader for PR Code Review Assistant.
 Implements deterministic grading with comment-to-issue matching.
 """
 
+import re
 from typing import List, Dict, Any, Set, Tuple
 from ..models import (
     Action,
@@ -25,6 +26,17 @@ class ReviewGrader:
             line_tolerance: Number of lines tolerance for matching (±2 default)
         """
         self.line_tolerance = line_tolerance
+        self.keyword_synonyms: Dict[str, Set[str]] = {
+            "sql": {"sql", "query", "database"},
+            "injection": {"injection", "inject", "unsanitized"},
+            "xss": {"xss", "script", "javascript", "crosssite", "cross-site"},
+            "redirect": {"redirect", "openredirect", "open-redirect"},
+            "race": {"race", "concurrency", "concurrent", "atomic"},
+            "password": {"password", "plaintext", "hash", "hashed", "bcrypt"},
+            "cache": {"cache", "ttl", "eviction", "memory"},
+            "limit": {"limit", "pagination", "slice"},
+            "exception": {"exception", "error", "swallow", "retry"},
+        }
 
     def grade_review(
         self,
@@ -180,14 +192,40 @@ class ReviewGrader:
         if comment.category == issue.category:
             score += 0.2
 
-        # Keyword overlap (simple check)
-        issue_keywords = set(issue.description.lower().split())
-        comment_keywords = set(comment.comment.lower().split())
-        overlap = len(issue_keywords & comment_keywords)
+        # Keyword overlap with deterministic token normalization + synonyms
+        issue_keywords = self._normalized_tokens(issue.description)
+        comment_keywords = self._normalized_tokens(comment.comment)
+        issue_expanded = self._expand_with_synonyms(issue_keywords)
+        comment_expanded = self._expand_with_synonyms(comment_keywords)
+        overlap = len(issue_expanded & comment_expanded)
         if overlap > 0:
             score += 0.1
 
         return score
+
+    def _normalized_tokens(self, text: str) -> Set[str]:
+        """Normalize tokens for deterministic matching."""
+        tokens = re.findall(r"[a-z0-9\-]+", text.lower())
+        normalized: Set[str] = set()
+        for token in tokens:
+            t = token.strip("-")
+            if not t:
+                continue
+            # very small deterministic singularization heuristic
+            if t.endswith("s") and len(t) > 4:
+                t = t[:-1]
+            normalized.add(t)
+        return normalized
+
+    def _expand_with_synonyms(self, tokens: Set[str]) -> Set[str]:
+        """Expand token set with small deterministic synonym groups."""
+        expanded = set(tokens)
+        for token in list(tokens):
+            for key, syns in self.keyword_synonyms.items():
+                if token == key or token in syns:
+                    expanded.add(key)
+                    expanded.update(syns)
+        return expanded
 
     def _severity_match_score(self, comment_severity: str, issue_severity: str) -> float:
         """

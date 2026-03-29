@@ -1,40 +1,40 @@
 {
   "results": {
     "task1_security_basic": {
-      "score": 0.8466666666666667,
-      "passed": true,
+      "score": 0.6333333333333333,
+      "passed": false,
       "min_passing_score": 0.7,
-      "precision": 0.6,
-      "recall": 1.0,
-      "severity_alignment": 0.8333333333333334,
-      "true_positives": 3,
+      "precision": 0.5,
+      "recall": 0.6666666666666666,
+      "severity_alignment": 0.75,
+      "true_positives": 2,
       "false_positives": 2,
-      "false_negatives": 0
+      "false_negatives": 1
     },
     "task2_quality_logic": {
-      "score": 0.5848214285714285,
-      "passed": false,
+      "score": 0.7823809523809524,
+      "passed": true,
       "min_passing_score": 0.75,
-      "precision": 0.5714285714285714,
-      "recall": 0.5714285714285714,
-      "severity_alignment": 0.375,
-      "true_positives": 4,
-      "false_positives": 3,
-      "false_negatives": 3
-    },
-    "task3_advanced_review": {
-      "score": 0.7733333333333334,
-      "passed": false,
-      "min_passing_score": 0.8,
       "precision": 0.8333333333333334,
       "recall": 0.7142857142857143,
       "severity_alignment": 0.7,
       "true_positives": 5,
       "false_positives": 1,
       "false_negatives": 2
+    },
+    "task3_advanced_review": {
+      "score": 0.6035714285714286,
+      "passed": false,
+      "min_passing_score": 0.8,
+      "precision": 0.5714285714285714,
+      "recall": 0.5714285714285714,
+      "severity_alignment": 0.625,
+      "true_positives": 4,
+      "false_positives": 3,
+      "false_negatives": 3
     }
   },
-  "average_score": 0.7349404761904762,
+  "average_score": 0.6730952380952381,
   "model": "openai/gpt-oss-120b",
   "provider": "groq",
   "temperature": 0.0,

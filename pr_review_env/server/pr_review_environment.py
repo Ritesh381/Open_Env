@@ -31,6 +31,7 @@ class PRReviewEnvironment(Environment):
         self.submitted_inline_comments = []
         self.submitted_general_comments = []
         self.last_feedback = None
+        self.reviewed_files = set()
 
         # Load all available tasks
         self.tasks = self._load_all_tasks()
@@ -114,6 +115,7 @@ class PRReviewEnvironment(Environment):
         self.submitted_inline_comments = []
         self.submitted_general_comments = []
         self.last_feedback = None
+        self.reviewed_files = set()
 
         # Create observation (without ground truth for agent)
         pr_state_for_agent = PRStateForAgent(
@@ -281,9 +283,18 @@ class PRReviewEnvironment(Environment):
         """
         prev_tp = self.last_feedback.true_positives if self.last_feedback else 0
         prev_cov = self.last_feedback.coverage if self.last_feedback else 0.0
+        prev_severity = self.last_feedback.severity_alignment if self.last_feedback else 0.0
 
         new_tp = max(0, partial_feedback.true_positives - prev_tp)
         coverage_gain = max(0.0, partial_feedback.coverage - prev_cov)
+        severity_gain = max(0.0, partial_feedback.severity_alignment - prev_severity)
+
+        newly_reviewed_files = {
+            c.file_path for c in action.inline_comments
+            if c.file_path not in self.reviewed_files
+        }
+        self.reviewed_files.update(c.file_path for c in action.inline_comments)
+        file_coverage_bonus = 0.03 * len(newly_reviewed_files)
 
         existing_keys = {
             (c.file_path, c.line_number, c.category)
@@ -295,7 +306,14 @@ class PRReviewEnvironment(Environment):
         )
 
         over_comment_penalty = max(0, len(action.inline_comments) - 4) * 0.01
-        reward = (0.12 * new_tp) + (0.08 * coverage_gain) - (0.03 * duplicate_count) - over_comment_penalty
+        reward = (
+            (0.12 * new_tp)
+            + (0.08 * coverage_gain)
+            + (0.05 * severity_gain)
+            + file_coverage_bonus
+            - (0.06 * duplicate_count)
+            - over_comment_penalty
+        )
         return max(-0.1, min(0.35, reward))
 
     def _compute_early_detection_bonus(self, action: Action) -> float:

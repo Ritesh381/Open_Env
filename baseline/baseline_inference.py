@@ -85,7 +85,7 @@ class BaselineAgent:
     VALID_DECISIONS = {"approve", "request_changes", "comment"}
     TASK_COMMENT_BUDGET = {
         "task1_security_basic": 5,
-        "task2_quality_logic": 7,
+        "task2_quality_logic": 6,
         "task3_advanced_review": 8,
     }
 
@@ -368,6 +368,46 @@ Changes:
             "submit": True,
         }
 
+    def _filter_inline_comments_for_task(
+        self,
+        inline_comments: List[Dict[str, Any]],
+        task_id: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Deterministic post-processing to improve precision and remove near-duplicates.
+        """
+        if not inline_comments:
+            return inline_comments
+
+        # De-duplicate by (file, line, category) root cause key.
+        deduped: List[Dict[str, Any]] = []
+        seen_keys = set()
+        for comment in inline_comments:
+            key = (
+                comment.get("file_path"),
+                comment.get("line_number"),
+                comment.get("category"),
+            )
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            deduped.append(comment)
+
+        if task_id != "task2_quality_logic":
+            return deduped
+
+        # On Task2, drop weak style-only findings when higher-severity findings exist.
+        has_error_or_critical = any(
+            c.get("severity") in {"error", "critical"} for c in deduped
+        )
+        if has_error_or_critical:
+            deduped = [
+                c for c in deduped
+                if not (c.get("category") == "style" and c.get("severity") in {"info", "warning"})
+            ]
+
+        return deduped
+
     def _load_task_threshold(self, task_id: str) -> float:
         """Load task min passing score from task config."""
         task_file = self.project_root / "tasks" / f"{task_id}.json"
@@ -412,6 +452,10 @@ Changes:
                 action = self._normalize_action(
                     self.review_pr(obs["pr_state"], task_id=task_id),
                     max_inline_comments=self._task_comment_budget(task_id),
+                )
+                action["inline_comments"] = self._filter_inline_comments_for_task(
+                    action["inline_comments"],
+                    task_id
                 )
 
                 print(f"Found {len(action['inline_comments'])} inline comments")

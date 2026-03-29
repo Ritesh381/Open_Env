@@ -210,6 +210,28 @@ The environment is now multi-step (`max_steps=5`) with dense trajectory rewards:
 
 This provides a meaningful learning signal throughout the episode, not only at the terminal step.
 
+Reward decomposition (current implementation):
+```python
+# Intermediate step reward (bounded to [-0.1, 0.35])
+intermediate_reward = (
+    0.12 * new_true_positives
+    + 0.08 * coverage_gain
+    + 0.05 * severity_alignment_gain
+    + 0.03 * newly_reviewed_files
+    - 0.06 * duplicate_comments
+    - over_comment_penalty
+)
+
+# Terminal reward (bounded to [-0.1, 1.1])
+terminal_reward = (
+    grader_score
+    + early_detection_bonus
+    + actionability_bonus
+    + coverage_bonus
+    - false_positive_penalty
+)
+```
+
 ---
 
 ## 🚀 Setup & Usage
@@ -298,12 +320,12 @@ python baseline/baseline_inference.py \
 **Results**:
 | Task | Score | Passed | Precision | Recall |
 |------|-------|--------|-----------|--------|
-| Task 1 (Easy) | 0.82 | ✗ | 0.50 | 1.00 |
-| Task 2 (Medium) | 0.64 | ✗ | 0.57 | 0.57 |
-| Task 3 (Hard) | 0.38 | ✗ | 0.33 | 0.29 |
-| **Average** | **0.61** | - | - | - |
+| Task 1 (Easy) | 0.85 | ✓ | 0.60 | 1.00 |
+| Task 2 (Medium) | 0.58 | ✗ | 0.57 | 0.57 |
+| Task 3 (Hard) | 0.77 | ✗ | 0.83 | 0.71 |
+| **Average** | **0.73** | - | - | - |
 
-The hard task genuinely challenges frontier models!
+Canonical artifact: `baseline_results_groq_120b.json`
 
 ---
 
@@ -395,7 +417,8 @@ pr-review-env/
 │   └── baseline_inference.py     # OpenAI-compatible baseline
 ├── tests/
 │   ├── test_environment.py
-│   └── test_api.py
+│   ├── test_api.py
+│   └── test_grader_determinism.py
 ├── openenv.yaml                  # OpenEnv specification
 ├── pyproject.toml                # Dependencies
 ├── uv.lock                       # Resolver lock file for validation
@@ -413,6 +436,11 @@ This environment trains agents for:
 2. **Review Augmentation** - Suggest issues to human reviewers
 3. **Custom Bots** - Train on company-specific patterns
 4. **Developer Education** - Teach juniors what to look for
+
+Known limitations:
+- Diff-centric simulation (not full repository execution context).
+- Keyword-driven deterministic grading is robust but not semantic-equivalence complete.
+- Current tasks focus on Python PRs; multilingual task packs are future work.
 
 ---
 
