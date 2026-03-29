@@ -12,29 +12,29 @@
       "false_negatives": 1
     },
     "task2_quality_logic": {
-      "score": 0.7823809523809524,
-      "passed": true,
+      "score": 0.6648214285714286,
+      "passed": false,
       "min_passing_score": 0.75,
-      "precision": 0.8333333333333334,
-      "recall": 0.7142857142857143,
-      "severity_alignment": 0.7,
-      "true_positives": 5,
+      "precision": 0.8,
+      "recall": 0.5714285714285714,
+      "severity_alignment": 0.375,
+      "true_positives": 4,
       "false_positives": 1,
-      "false_negatives": 2
+      "false_negatives": 3
     },
     "task3_advanced_review": {
-      "score": 0.6035714285714286,
+      "score": 0.5750000000000001,
       "passed": false,
       "min_passing_score": 0.8,
-      "precision": 0.5714285714285714,
+      "precision": 0.5,
       "recall": 0.5714285714285714,
       "severity_alignment": 0.625,
       "true_positives": 4,
-      "false_positives": 3,
+      "false_positives": 4,
       "false_negatives": 3
     }
   },
-  "average_score": 0.6730952380952381,
+  "average_score": 0.6243849206349207,
   "model": "openai/gpt-oss-120b",
   "provider": "groq",
   "temperature": 0.0,
