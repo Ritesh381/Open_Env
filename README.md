@@ -159,7 +159,30 @@ Agents observe the PR state without seeing ground truth:
 - N+1 query problems
 - Silent exception swallowing
 - **Min passing score**: 0.8
-- **Expected baseline (GPT-4)**: 0.63 ✗
+
+### Task 4: Session and Auth Hardening (Medium)
+**Focus**: JWT/session lifecycle vulnerabilities
+- Missing token claim validation
+- Refresh flow type confusion
+- Incomplete logout invalidation
+- Weak refresh token storage semantics
+- **Min passing score**: 0.76
+
+### Task 5: Async Pipeline Security (Hard)
+**Focus**: Webhook authenticity + idempotency under concurrency
+- Replay-prone signature validation
+- Non-atomic dedupe in worker
+- Transaction safety in ledger updates
+- Cross-account update risk
+- **Min passing score**: 0.8
+
+### Task 6: Secure Data Export (Hard)
+**Focus**: Multi-step PII export and access control
+- Cross-tenant export creation
+- Unscoped PII query exposure
+- Unsafe temporary file handling
+- Download redirect without ownership checks
+- **Min passing score**: 0.82
 
 ---
 
@@ -317,7 +340,7 @@ python baseline/baseline_inference.py \
   --output baseline_results_groq_120b.json
 ```
 
-**Results**:
+**Results (3-task sample before expansion)**:
 | Task | Score | Passed | Precision | Recall |
 |------|-------|--------|-----------|--------|
 | Task 1 (Easy) | 0.85 | ✓ | 0.60 | 1.00 |
@@ -325,6 +348,7 @@ python baseline/baseline_inference.py \
 | Task 3 (Hard) | 0.77 | ✗ | 0.83 | 0.71 |
 | **Average** | **0.73** | - | - | - |
 
+For full 6-task runs, use the same command (defaults now include Tasks 1-6) and regenerate the artifact.
 Canonical artifact: `baseline_results_groq_120b.json`
 
 ---

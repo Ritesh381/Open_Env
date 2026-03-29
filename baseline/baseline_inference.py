@@ -87,6 +87,9 @@ class BaselineAgent:
         "task1_security_basic": 5,
         "task2_quality_logic": 6,
         "task3_advanced_review": 8,
+        "task4_session_auth_medium": 6,
+        "task5_async_pipeline_hard": 8,
+        "task6_data_export_hard": 8,
     }
 
     def __init__(
@@ -158,6 +161,21 @@ class BaselineAgent:
             task_hint = (
                 "Task focus: architectural/subtle issues. "
                 "Prioritize broad but relevant coverage of high-impact architecture/performance/reliability issues."
+            )
+        elif task_id == "task4_session_auth_medium":
+            task_hint = (
+                "Task focus: session/auth hardening. "
+                "Prioritize token validation, refresh/logout correctness, and replay/session invalidation risks."
+            )
+        elif task_id == "task5_async_pipeline_hard":
+            task_hint = (
+                "Task focus: async pipeline integrity. "
+                "Prioritize webhook authenticity, idempotency races, and transactional balance-update correctness."
+            )
+        elif task_id == "task6_data_export_hard":
+            task_hint = (
+                "Task focus: secure data export. "
+                "Prioritize tenant isolation, PII exposure paths, URL access controls, and audit completeness."
             )
 
         prompt = f"""Review this pull request:
@@ -546,7 +564,14 @@ def main():
         "--task-ids",
         type=str,
         nargs="+",
-        default=["task1_security_basic", "task2_quality_logic", "task3_advanced_review"],
+        default=[
+            "task1_security_basic",
+            "task2_quality_logic",
+            "task3_advanced_review",
+            "task4_session_auth_medium",
+            "task5_async_pipeline_hard",
+            "task6_data_export_hard",
+        ],
         help="Task IDs to evaluate"
     )
     parser.add_argument(

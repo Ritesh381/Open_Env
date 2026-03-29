@@ -1,0 +1,70 @@
+{
+  "generated_at": "2026-03-29T19:58:50.017594+00:00",
+  "config": {
+    "trials": 5,
+    "provider": "groq",
+    "model": "llama-3.3-70b-versatile",
+    "temperature": 0.0,
+    "base_seed": 42,
+    "task_ids": [
+      "task1_security_basic",
+      "task2_quality_logic",
+      "task3_advanced_review",
+      "task4_session_auth_medium",
+      "task5_async_pipeline_hard",
+      "task6_data_export_hard"
+    ]
+  },
+  "overall": {
+    "mean": 0.7613154761904762,
+    "std": 0.020735415202633396,
+    "ci95_low": 0.7431400834000461,
+    "ci95_high": 0.7794908689809064
+  },
+  "per_task": {
+    "task1_security_basic": {
+      "mean": 0.7833333333333333,
+      "std": 0.0,
+      "ci95_low": 0.7833333333333333,
+      "ci95_high": 0.7833333333333333
+    },
+    "task2_quality_logic": {
+      "mean": 0.7018928571428571,
+      "std": 0.05398022597135328,
+      "ci95_low": 0.6545771028954608,
+      "ci95_high": 0.7492086113902534
+    },
+    "task3_advanced_review": {
+      "mean": 0.7193333333333334,
+      "std": 0.057392411422494634,
+      "ci95_low": 0.6690266666666667,
+      "ci95_high": 0.7696400000000001
+    },
+    "task4_session_auth_medium": {
+      "mean": 0.7433333333333334,
+      "std": 0.022360679774997918,
+      "ci95_low": 0.7237333333333333,
+      "ci95_high": 0.7629333333333335
+    },
+    "task5_async_pipeline_hard": {
+      "mean": 0.793,
+      "std": 0.04052434110781101,
+      "ci95_low": 0.7574788488675018,
+      "ci95_high": 0.8285211511324982
+    },
+    "task6_data_export_hard": {
+      "mean": 0.8270000000000001,
+      "std": 0.044322053702919056,
+      "ci95_low": 0.7881500070070078,
+      "ci95_high": 0.8658499929929924
+    }
+  },
+  "mean_ordering_desc": [
+    "task6_data_export_hard",
+    "task5_async_pipeline_hard",
+    "task1_security_basic",
+    "task4_session_auth_medium",
+    "task3_advanced_review",
+    "task2_quality_logic"
+  ]
+}

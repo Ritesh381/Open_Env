@@ -1,0 +1,147 @@
+{
+  "task_id": "task4_session_auth_medium",
+  "name": "Session and Auth Hardening",
+  "difficulty": "medium",
+  "min_passing_score": 0.76,
+  "grading_weights": {
+    "precision": 0.35,
+    "recall": 0.4,
+    "severity": 0.2,
+    "coverage": 0.05
+  },
+  "pr_scenario": {
+    "pr_id": "PR-004",
+    "metadata": {
+      "title": "Improve JWT auth and session management",
+      "description": "Adds refresh token rotation and logout endpoint updates across auth handlers.",
+      "author": "mid-level-dev",
+      "target_branch": "main",
+      "files_changed": 3,
+      "additions_total": 30,
+      "deletions_total": 4
+    },
+    "files": [
+      {
+        "path": "auth/jwt_service.py",
+        "language": "python",
+        "additions": [
+          "18: def verify_access_token(token):",
+          "19:     payload = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])",
+          "20:     return payload",
+          "21: ",
+          "22: def issue_refresh_token(user_id):",
+          "23:     token = jwt.encode({'sub': user_id, 'type': 'refresh'}, SECRET_KEY, algorithm='HS256')",
+          "24:     save_refresh_token(user_id, token)",
+          "25:     return token"
+        ],
+        "deletions": [],
+        "context": [
+          "15: import jwt",
+          "16: from db import save_refresh_token"
+        ],
+        "hunks": [
+          {
+            "start_line": 18,
+            "end_line": 25,
+            "content": "def verify_access_token(token):\n    payload = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])\n    return payload\n\ndef issue_refresh_token(user_id):\n    token = jwt.encode({'sub': user_id, 'type': 'refresh'}, SECRET_KEY, algorithm='HS256')\n    save_refresh_token(user_id, token)\n    return token"
+          }
+        ]
+      },
+      {
+        "path": "auth/routes.py",
+        "language": "python",
+        "additions": [
+          "44: @router.post('/logout')",
+          "45: def logout(request):",
+          "46:     token = request.headers.get('Authorization', '').replace('Bearer ', '')",
+          "47:     revoke_access_token(token)",
+          "48:     return {'ok': True}",
+          "49: ",
+          "50: @router.post('/refresh')",
+          "51: def refresh(request):",
+          "52:     refresh_token = request.json['refresh_token']",
+          "53:     payload = verify_access_token(refresh_token)",
+          "54:     return {'access_token': issue_access_token(payload['sub'])}"
+        ],
+        "deletions": [],
+        "context": [
+          "42: from auth.jwt_service import verify_access_token, issue_access_token",
+          "43: from auth.store import revoke_access_token"
+        ],
+        "hunks": [
+          {
+            "start_line": 44,
+            "end_line": 54,
+            "content": "@router.post('/logout')\ndef logout(request):\n    token = request.headers.get('Authorization', '').replace('Bearer ', '')\n    revoke_access_token(token)\n    return {'ok': True}\n\n@router.post('/refresh')\ndef refresh(request):\n    refresh_token = request.json['refresh_token']\n    payload = verify_access_token(refresh_token)\n    return {'access_token': issue_access_token(payload['sub'])}"
+          }
+        ]
+      },
+      {
+        "path": "auth/store.py",
+        "language": "python",
+        "additions": [
+          "12: def save_refresh_token(user_id, token):",
+          "13:     redis.set(f'refresh:{user_id}', token)",
+          "14: ",
+          "15: def revoke_access_token(token):",
+          "16:     redis.setex(f'revoked:{token}', 3600, '1')"
+        ],
+        "deletions": [],
+        "context": [
+          "10: # token store helpers"
+        ],
+        "hunks": [
+          {
+            "start_line": 12,
+            "end_line": 16,
+            "content": "def save_refresh_token(user_id, token):\n    redis.set(f'refresh:{user_id}', token)\n\ndef revoke_access_token(token):\n    redis.setex(f'revoked:{token}', 3600, '1')"
+          }
+        ]
+      }
+    ],
+    "ground_truth": {
+      "issues": [
+        {
+          "file": "auth/jwt_service.py",
+          "line": 19,
+          "severity": "critical",
+          "category": "security",
+          "description": "Missing issuer and audience validation in JWT decode allows token confusion and acceptance of improperly scoped tokens",
+          "cwe": "CWE-347"
+        },
+        {
+          "file": "auth/routes.py",
+          "line": 53,
+          "severity": "critical",
+          "category": "security",
+          "description": "Refresh endpoint validates refresh token with access-token verifier causing missing token type enforcement and replay risk",
+          "cwe": "CWE-287"
+        },
+        {
+          "file": "auth/routes.py",
+          "line": 47,
+          "severity": "warning",
+          "category": "security",
+          "description": "Logout revokes only access token and does not invalidate corresponding refresh token leading to persistent session reuse",
+          "cwe": "CWE-613"
+        },
+        {
+          "file": "auth/store.py",
+          "line": 13,
+          "severity": "warning",
+          "category": "security",
+          "description": "Refresh token storage is one-slot per user without rotation history enabling token overwrite race and weak replay detection",
+          "cwe": "CWE-362"
+        },
+        {
+          "file": "auth/store.py",
+          "line": 16,
+          "severity": "info",
+          "category": "maintainability",
+          "description": "Access token revoke TTL is hardcoded and can drift from token expiry configuration",
+          "cwe": null
+        }
+      ]
+    }
+  }
+}

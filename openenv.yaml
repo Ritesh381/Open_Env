@@ -31,3 +31,12 @@ metadata:
     - task_id: task3_advanced_review
       difficulty: hard
       min_passing_score: 0.8
+    - task_id: task4_session_auth_medium
+      difficulty: medium
+      min_passing_score: 0.76
+    - task_id: task5_async_pipeline_hard
+      difficulty: hard
+      min_passing_score: 0.8
+    - task_id: task6_data_export_hard
+      difficulty: hard
+      min_passing_score: 0.82

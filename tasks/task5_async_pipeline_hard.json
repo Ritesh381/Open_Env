@@ -1,0 +1,152 @@
+{
+  "task_id": "task5_async_pipeline_hard",
+  "name": "Async Pipeline Security and Idempotency",
+  "difficulty": "hard",
+  "min_passing_score": 0.8,
+  "grading_weights": {
+    "precision": 0.4,
+    "recall": 0.35,
+    "severity": 0.2,
+    "coverage": 0.05
+  },
+  "pr_scenario": {
+    "pr_id": "PR-005",
+    "metadata": {
+      "title": "Add async payment webhook ingestion pipeline",
+      "description": "Introduces background worker queue for webhook events and dedup cache for retries.",
+      "author": "senior-dev",
+      "target_branch": "main",
+      "files_changed": 3,
+      "additions_total": 35,
+      "deletions_total": 6
+    },
+    "files": [
+      {
+        "path": "webhooks/handler.py",
+        "language": "python",
+        "additions": [
+          "30: def ingest_webhook(request):",
+          "31:     signature = request.headers.get('X-Signature', '')",
+          "32:     payload = request.body.decode()",
+          "33:     if not verify_signature(signature):",
+          "34:         return {'ok': False}, 401",
+          "35:     event = json.loads(payload)",
+          "36:     enqueue_event(event['id'], payload)",
+          "37:     return {'ok': True}, 202"
+        ],
+        "deletions": [],
+        "context": [
+          "27: from queueing import enqueue_event",
+          "28: from crypto import verify_signature"
+        ],
+        "hunks": [
+          {
+            "start_line": 30,
+            "end_line": 37,
+            "content": "def ingest_webhook(request):\n    signature = request.headers.get('X-Signature', '')\n    payload = request.body.decode()\n    if not verify_signature(signature):\n        return {'ok': False}, 401\n    event = json.loads(payload)\n    enqueue_event(event['id'], payload)\n    return {'ok': True}, 202"
+          }
+        ]
+      },
+      {
+        "path": "queueing/worker.py",
+        "language": "python",
+        "additions": [
+          "41: def process_event(event_id, payload):",
+          "42:     if redis.get(f'evt:{event_id}'):",
+          "43:         return",
+          "44:     redis.setex(f'evt:{event_id}', 60, '1')",
+          "45:     data = json.loads(payload)",
+          "46:     charge_id = data['charge_id']",
+          "47:     amount = data['amount']",
+          "48:     apply_balance_update(charge_id, amount)",
+          "49:     audit_log('processed', event_id)"
+        ],
+        "deletions": [],
+        "context": [
+          "39: from accounting import apply_balance_update",
+          "40: from audit import audit_log"
+        ],
+        "hunks": [
+          {
+            "start_line": 41,
+            "end_line": 49,
+            "content": "def process_event(event_id, payload):\n    if redis.get(f'evt:{event_id}'):\n        return\n    redis.setex(f'evt:{event_id}', 60, '1')\n    data = json.loads(payload)\n    charge_id = data['charge_id']\n    amount = data['amount']\n    apply_balance_update(charge_id, amount)\n    audit_log('processed', event_id)"
+          }
+        ]
+      },
+      {
+        "path": "accounting/ledger.py",
+        "language": "python",
+        "additions": [
+          "55: def apply_balance_update(charge_id, amount):",
+          "56:     row = db.fetch_one('SELECT balance FROM accounts WHERE id=%s', (charge_id,))",
+          "57:     new_balance = row['balance'] + amount",
+          "58:     db.execute('UPDATE accounts SET balance=%s WHERE id=%s', (new_balance, charge_id))"
+        ],
+        "deletions": [],
+        "context": [
+          "53: # ledger updates"
+        ],
+        "hunks": [
+          {
+            "start_line": 55,
+            "end_line": 58,
+            "content": "def apply_balance_update(charge_id, amount):\n    row = db.fetch_one('SELECT balance FROM accounts WHERE id=%s', (charge_id,))\n    new_balance = row['balance'] + amount\n    db.execute('UPDATE accounts SET balance=%s WHERE id=%s', (new_balance, charge_id))"
+          }
+        ]
+      }
+    ],
+    "ground_truth": {
+      "issues": [
+        {
+          "file": "webhooks/handler.py",
+          "line": 33,
+          "severity": "critical",
+          "category": "security",
+          "description": "Signature validation ignores payload and timestamp allowing replayed requests with stale signatures",
+          "cwe": "CWE-294"
+        },
+        {
+          "file": "queueing/worker.py",
+          "line": 42,
+          "severity": "error",
+          "category": "bug",
+          "description": "Idempotency check and set are non-atomic, enabling duplicate event processing under concurrent workers",
+          "cwe": "CWE-362"
+        },
+        {
+          "file": "queueing/worker.py",
+          "line": 44,
+          "severity": "warning",
+          "category": "security",
+          "description": "Dedup TTL of 60 seconds is too short for payment provider retries causing replay acceptance after expiration",
+          "cwe": "CWE-613"
+        },
+        {
+          "file": "accounting/ledger.py",
+          "line": 56,
+          "severity": "critical",
+          "category": "security",
+          "description": "Ledger update path lacks tenant/account ownership validation enabling cross-account balance manipulation",
+          "cwe": "CWE-639"
+        },
+        {
+          "file": "accounting/ledger.py",
+          "line": 57,
+          "severity": "error",
+          "category": "bug",
+          "description": "Read-modify-write balance update is not transactional and can lose increments under concurrent updates",
+          "cwe": "CWE-362"
+        },
+        {
+          "file": "queueing/worker.py",
+          "line": 49,
+          "severity": "info",
+          "category": "maintainability",
+          "description": "Audit logging does not include processing latency or retry count, reducing incident forensics quality",
+          "cwe": null
+        }
+      ]
+    }
+  }
+}

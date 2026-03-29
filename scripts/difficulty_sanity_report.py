@@ -120,7 +120,14 @@ def main() -> None:
         "--task-ids",
         type=str,
         nargs="+",
-        default=["task1_security_basic", "task2_quality_logic", "task3_advanced_review"],
+        default=[
+            "task1_security_basic",
+            "task2_quality_logic",
+            "task3_advanced_review",
+            "task4_session_auth_medium",
+            "task5_async_pipeline_hard",
+            "task6_data_export_hard",
+        ],
     )
     parser.add_argument("--trials", type=int, default=5)
     parser.add_argument("--temperature", type=float, default=0.0)

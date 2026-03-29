@@ -1,0 +1,147 @@
+{
+  "task_id": "task6_data_export_hard",
+  "name": "Secure Data Export and Audit Reliability",
+  "difficulty": "hard",
+  "min_passing_score": 0.82,
+  "grading_weights": {
+    "precision": 0.4,
+    "recall": 0.35,
+    "severity": 0.2,
+    "coverage": 0.05
+  },
+  "pr_scenario": {
+    "pr_id": "PR-006",
+    "metadata": {
+      "title": "Implement customer data export worker",
+      "description": "Adds export endpoint and async worker to generate CSV reports for enterprise customers.",
+      "author": "senior-dev",
+      "target_branch": "main",
+      "files_changed": 3,
+      "additions_total": 33,
+      "deletions_total": 5
+    },
+    "files": [
+      {
+        "path": "exports/routes.py",
+        "language": "python",
+        "additions": [
+          "20: @router.post('/exports')",
+          "21: def create_export(request, user):",
+          "22:     target_account = request.json.get('account_id', user.account_id)",
+          "23:     export_id = enqueue_export_job(target_account, user.id)",
+          "24:     return {'export_id': export_id}, 202"
+        ],
+        "deletions": [],
+        "context": [
+          "18: from exports.queue import enqueue_export_job"
+        ],
+        "hunks": [
+          {
+            "start_line": 20,
+            "end_line": 24,
+            "content": "@router.post('/exports')\ndef create_export(request, user):\n    target_account = request.json.get('account_id', user.account_id)\n    export_id = enqueue_export_job(target_account, user.id)\n    return {'export_id': export_id}, 202"
+          }
+        ]
+      },
+      {
+        "path": "exports/worker.py",
+        "language": "python",
+        "additions": [
+          "38: def run_export(export_id, account_id, requester_id):",
+          "39:     rows = db.fetch_all('SELECT email, phone, address FROM customers WHERE account_id=%s', (account_id,))",
+          "40:     csv_blob = build_csv(rows)",
+          "41:     path = f'/tmp/export-{export_id}.csv'",
+          "42:     with open(path, 'w') as f:",
+          "43:         f.write(csv_blob)",
+          "44:     signed_url = storage.sign(path, ttl_seconds=86400)",
+          "45:     db.execute('UPDATE exports SET status=%s, url=%s WHERE id=%s', ('ready', signed_url, export_id))",
+          "46:     audit('export_ready', requester_id, {'export_id': export_id})"
+        ],
+        "deletions": [],
+        "context": [
+          "36: from storage import storage",
+          "37: from audit import audit"
+        ],
+        "hunks": [
+          {
+            "start_line": 38,
+            "end_line": 46,
+            "content": "def run_export(export_id, account_id, requester_id):\n    rows = db.fetch_all('SELECT email, phone, address FROM customers WHERE account_id=%s', (account_id,))\n    csv_blob = build_csv(rows)\n    path = f'/tmp/export-{export_id}.csv'\n    with open(path, 'w') as f:\n        f.write(csv_blob)\n    signed_url = storage.sign(path, ttl_seconds=86400)\n    db.execute('UPDATE exports SET status=%s, url=%s WHERE id=%s', ('ready', signed_url, export_id))\n    audit('export_ready', requester_id, {'export_id': export_id})"
+          }
+        ]
+      },
+      {
+        "path": "exports/download.py",
+        "language": "python",
+        "additions": [
+          "12: def download_export(request, export_id):",
+          "13:     export_row = db.fetch_one('SELECT url, account_id FROM exports WHERE id=%s', (export_id,))",
+          "14:     return redirect(export_row['url'])"
+        ],
+        "deletions": [],
+        "context": [
+          "10: from flask import redirect"
+        ],
+        "hunks": [
+          {
+            "start_line": 12,
+            "end_line": 14,
+            "content": "def download_export(request, export_id):\n    export_row = db.fetch_one('SELECT url, account_id FROM exports WHERE id=%s', (export_id,))\n    return redirect(export_row['url'])"
+          }
+        ]
+      }
+    ],
+    "ground_truth": {
+      "issues": [
+        {
+          "file": "exports/routes.py",
+          "line": 22,
+          "severity": "critical",
+          "category": "security",
+          "description": "Export endpoint trusts client-provided account_id without authorization check enabling cross-tenant data export",
+          "cwe": "CWE-639"
+        },
+        {
+          "file": "exports/worker.py",
+          "line": 39,
+          "severity": "error",
+          "category": "security",
+          "description": "Export query pulls full PII columns without field-level access policy enforcement for requester role",
+          "cwe": "CWE-200"
+        },
+        {
+          "file": "exports/worker.py",
+          "line": 41,
+          "severity": "warning",
+          "category": "security",
+          "description": "Writes sensitive export to world-readable /tmp path before secure storage transfer",
+          "cwe": "CWE-377"
+        },
+        {
+          "file": "exports/worker.py",
+          "line": 44,
+          "severity": "warning",
+          "category": "security",
+          "description": "Signed URL TTL of 24 hours is excessive for PII export and increases exfiltration window",
+          "cwe": "CWE-613"
+        },
+        {
+          "file": "exports/download.py",
+          "line": 14,
+          "severity": "critical",
+          "category": "security",
+          "description": "Download endpoint redirects to stored URL without requester account ownership verification",
+          "cwe": "CWE-639"
+        },
+        {
+          "file": "exports/worker.py",
+          "line": 46,
+          "severity": "info",
+          "category": "maintainability",
+          "description": "Audit event does not log target account_id reducing traceability for abuse investigations",
+          "cwe": null
+        }
+      ]
+    }
+  }
+}
