@@ -15,10 +15,12 @@ from ..models import Action, Observation
 from .pr_review_environment import PRReviewEnvironment
 from .grader import ReviewGrader
 
+# Use a shared environment instance so reset/step state persists across HTTP requests.
+_shared_env = PRReviewEnvironment()
 
 # Create OpenEnv-compliant app
 app = create_app(
-    PRReviewEnvironment,  # Pass class, not instance
+    lambda: _shared_env,
     Action,
     Observation,
     env_name="pr_review_env"

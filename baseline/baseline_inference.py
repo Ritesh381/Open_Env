@@ -1,13 +1,16 @@
 """
-OpenAI baseline for PR Code Review Assistant.
+Baseline inference for PR Code Review Assistant.
 
-This script runs a baseline evaluation using OpenAI's GPT-4 model.
+This script runs baseline evaluation using various LLM providers.
+Supports: OpenAI GPT-4, Groq (GPT OSS 120B), and more.
 """
 
 import os
 import json
+import re
 import requests
-from typing import Dict, List, Any
+import argparse
+from typing import Dict, List, Any, Optional
 from openai import OpenAI
 
 # System prompt for code review
@@ -49,31 +52,79 @@ Your response must be valid JSON matching this schema:
   }
 }
 
-Be thorough but precise. Focus on real issues, not nitpicks."""
+Be thorough but precise. Focus on real issues, not nitpicks.
+
+IMPORTANT OUTPUT LIMITS:
+- Return at most 8 inline comments total (highest impact only).
+- Keep each comment under 220 characters.
+- Return strictly valid JSON with double quotes and no trailing text."""
 
 
-class OpenAIBaseline:
-    """Baseline agent using OpenAI API."""
+class BaselineAgent:
+    """Baseline agent supporting multiple LLM providers."""
+
+    # Provider configurations
+    PROVIDERS = {
+        "openai": {
+            "base_url": "https://api.openai.com/v1",
+            "env_key": "OPENAI_API_KEY",
+            "default_model": "gpt-4-turbo-preview"
+        },
+        "groq": {
+            "base_url": "https://api.groq.com/openai/v1",
+            "env_key": "GROQ_API_KEY",
+            "default_model": "openai/gpt-oss-120b"
+        }
+    }
+    VALID_SEVERITIES = {"info", "warning", "error", "critical"}
+    VALID_INLINE_CATEGORIES = {"security", "bug", "performance", "style", "maintainability", "testing", "documentation"}
+    VALID_GENERAL_CATEGORIES = {"architecture", "approach", "testing", "documentation", "general"}
+    VALID_DECISIONS = {"approve", "request_changes", "comment"}
 
     def __init__(
         self,
-        model: str = "gpt-4-turbo-preview",
-        base_url: str = "http://localhost:8000"
+        provider: str = "openai",
+        model: Optional[str] = None,
+        env_base_url: str = "http://localhost:8000",
+        api_key: Optional[str] = None
     ):
         """
-        Initialize baseline.
+        Initialize baseline agent.
 
         Args:
-            model: OpenAI model to use
-            base_url: Base URL for the environment server
+            provider: LLM provider ("openai" or "groq")
+            model: Model name (uses provider default if None)
+            env_base_url: Base URL for the environment server
+            api_key: API key (uses env variable if None)
         """
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise ValueError("OPENAI_API_KEY environment variable not set")
+        if provider not in self.PROVIDERS:
+            raise ValueError(f"Unknown provider: {provider}. Choose from: {list(self.PROVIDERS.keys())}")
 
-        self.client = OpenAI(api_key=api_key)
-        self.model = model
-        self.base_url = base_url
+        provider_config = self.PROVIDERS[provider]
+
+        # Get API key
+        self.api_key = api_key or os.getenv(provider_config["env_key"])
+        if not self.api_key:
+            raise ValueError(
+                f"{provider_config['env_key']} environment variable not set. "
+                f"Please set it with: export {provider_config['env_key']}='your-key-here'"
+            )
+
+        # Initialize OpenAI client with provider's base URL
+        self.client = OpenAI(
+            api_key=self.api_key,
+            base_url=provider_config["base_url"]
+        )
+
+        self.provider = provider
+        self.model = model or provider_config["default_model"]
+        self.env_base_url = env_base_url
+        self.http = requests.Session()
+
+        print(f"✓ Initialized {provider.upper()} baseline")
+        print(f"  Model: {self.model}")
+        print(f"  Environment: {env_base_url}")
+        print()
 
     def _build_prompt(self, pr_state: Dict[str, Any]) -> str:
         """Build prompt from PR state."""
@@ -109,7 +160,7 @@ Changes:
 
     def review_pr(self, pr_state: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Generate review using OpenAI.
+        Generate review using LLM.
 
         Args:
             pr_state: PR state from environment
@@ -120,22 +171,34 @@ Changes:
         prompt = self._build_prompt(pr_state)
 
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
+            # Build API call parameters
+            api_params = {
+                "model": self.model,
+                "messages": [
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": prompt}
                 ],
-                response_format={"type": "json_object"},
-                temperature=0.1,
-                max_tokens=2048
-            )
+                "temperature": 0.1,
+                "max_tokens": 4096
+            }
 
-            action = json.loads(response.choices[0].message.content)
+            # OpenAI-compatible providers support json_object mode.
+            if self.provider in {"openai", "groq"}:
+                api_params["response_format"] = {"type": "json_object"}
+
+            response = self.client.chat.completions.create(**api_params)
+
+            # Parse response
+            content = response.choices[0].message.content
+
+            # Try to extract JSON from response
+            action = self._parse_json_response(content)
             return action
 
         except Exception as e:
-            print(f"Error calling OpenAI: {e}")
+            print(f"Error calling {self.provider.upper()}: {e}")
+            import traceback
+            traceback.print_exc()
             # Return minimal valid action
             return {
                 "inline_comments": [],
@@ -145,6 +208,124 @@ Changes:
                     "summary": f"Error during review: {e}"
                 }
             }
+
+    def _parse_json_response(self, content: str) -> Dict[str, Any]:
+        """Parse JSON from LLM response, handling markdown code blocks."""
+        try:
+            # Try direct parsing first
+            return json.loads(content)
+        except json.JSONDecodeError:
+            # Try extracting from markdown code block
+            if "```json" in content:
+                json_str = content.split("```json")[1].split("```")[0].strip()
+                return json.loads(json_str)
+            elif "```" in content:
+                json_str = content.split("```")[1].split("```")[0].strip()
+                return json.loads(json_str)
+            else:
+                raise ValueError(f"Could not parse JSON from response: {content[:200]}...")
+
+    def _extract_observation(self, payload: Dict[str, Any], endpoint: str) -> Dict[str, Any]:
+        """
+        Extract observation object from API payload.
+
+        OpenEnv servers may return either:
+        1) raw observation: {"pr_state": ..., "feedback": ..., "metadata": ...}
+        2) wrapped response: {"observation": {"pr_state": ...}, ...}
+        """
+        if isinstance(payload, dict):
+            if "pr_state" in payload:
+                return payload
+            if isinstance(payload.get("observation"), dict):
+                return payload["observation"]
+
+        raise ValueError(
+            f"Unexpected {endpoint} response format. "
+            f"Top-level keys: {list(payload.keys()) if isinstance(payload, dict) else type(payload)}"
+        )
+
+    def _parse_line_number(self, value: Any) -> Optional[int]:
+        """Convert LLM-provided line number to int if possible."""
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str):
+            match = re.search(r"\d+", value)
+            if match:
+                return int(match.group(0))
+        return None
+
+    def _normalize_action(self, action: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize LLM output into schema-valid Action payload."""
+        if not isinstance(action, dict):
+            action = {}
+
+        normalized_inline = []
+        for comment in action.get("inline_comments", []) or []:
+            if not isinstance(comment, dict):
+                continue
+
+            file_path = comment.get("file_path")
+            text = comment.get("comment")
+            line_number = self._parse_line_number(comment.get("line_number"))
+            severity = str(comment.get("severity", "warning")).lower()
+            category = str(comment.get("category", "bug")).lower()
+
+            if not isinstance(file_path, str) or not file_path.strip():
+                continue
+            if not isinstance(text, str) or not text.strip():
+                continue
+            if line_number is None:
+                continue
+            if severity not in self.VALID_SEVERITIES:
+                severity = "warning"
+            if category not in self.VALID_INLINE_CATEGORIES:
+                category = "bug"
+
+            item = {
+                "file_path": file_path.strip(),
+                "line_number": line_number,
+                "comment": text.strip(),
+                "severity": severity,
+                "category": category,
+            }
+            suggested_fix = comment.get("suggested_fix")
+            if isinstance(suggested_fix, str) and suggested_fix.strip():
+                item["suggested_fix"] = suggested_fix.strip()
+            normalized_inline.append(item)
+
+        normalized_general = []
+        for comment in action.get("general_comments", []) or []:
+            if not isinstance(comment, dict):
+                continue
+            text = comment.get("comment")
+            category = str(comment.get("category", "general")).lower()
+            if not isinstance(text, str) or not text.strip():
+                continue
+            if category not in self.VALID_GENERAL_CATEGORIES:
+                category = "general"
+            normalized_general.append({
+                "comment": text.strip(),
+                "category": category,
+            })
+
+        decision_obj = action.get("decision", {})
+        if not isinstance(decision_obj, dict):
+            decision_obj = {}
+        decision = str(decision_obj.get("decision", "comment")).lower()
+        if decision not in self.VALID_DECISIONS:
+            decision = "comment"
+        summary = decision_obj.get("summary")
+        if not isinstance(summary, str) or not summary.strip():
+            summary = "Automated review generated by baseline agent."
+
+        return {
+            "inline_comments": normalized_inline,
+            "general_comments": normalized_general,
+            "decision": {
+                "decision": decision,
+                "summary": summary.strip(),
+            },
+        }
 
     def run_evaluation(self, task_ids: List[str]) -> Dict[str, Any]:
         """
@@ -165,27 +346,29 @@ Changes:
 
             try:
                 # Reset environment to this task
-                reset_response = requests.post(
-                    f"{self.base_url}/reset",
+                reset_response = self.http.post(
+                    f"{self.env_base_url}/reset",
                     json={"task_id": task_id}
                 )
                 reset_response.raise_for_status()
-                obs = reset_response.json()
+                reset_payload = reset_response.json()
+                obs = self._extract_observation(reset_payload, "/reset")
 
                 # Generate review
-                print("Generating review with OpenAI...")
-                action = self.review_pr(obs["pr_state"])
+                print(f"Generating review with {self.provider.upper()} ({self.model})...")
+                action = self._normalize_action(self.review_pr(obs["pr_state"]))
 
                 print(f"Found {len(action['inline_comments'])} inline comments")
                 print(f"Decision: {action['decision']['decision']}")
 
                 # Execute step
-                step_response = requests.post(
-                    f"{self.base_url}/step",
+                step_response = self.http.post(
+                    f"{self.env_base_url}/step",
                     json={"action": action}
                 )
                 step_response.raise_for_status()
-                result = step_response.json()
+                step_payload = step_response.json()
+                result = self._extract_observation(step_payload, "/step")
 
                 # Extract results
                 feedback = result.get("feedback", {})
@@ -233,21 +416,56 @@ Changes:
 
 def main():
     """Main entry point."""
-    baseline = OpenAIBaseline()
+    parser = argparse.ArgumentParser(description="Run baseline inference for PR code review")
+    parser.add_argument(
+        "--provider",
+        type=str,
+        default="openai",
+        choices=["openai", "groq"],
+        help="LLM provider to use"
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        help="Model name (overrides provider default)"
+    )
+    parser.add_argument(
+        "--env-url",
+        type=str,
+        default="http://localhost:8000",
+        help="Environment server base URL"
+    )
+    parser.add_argument(
+        "--task-ids",
+        type=str,
+        nargs="+",
+        default=["task1_security_basic", "task2_quality_logic", "task3_advanced_review"],
+        help="Task IDs to evaluate"
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        default="baseline_results.json",
+        help="Output file for results"
+    )
 
-    task_ids = [
-        "task1_security_basic",
-        "task2_quality_logic",
-        "task3_advanced_review"
-    ]
+    args = parser.parse_args()
 
-    results = baseline.run_evaluation(task_ids)
+    # Initialize baseline agent
+    baseline = BaselineAgent(
+        provider=args.provider,
+        model=args.model,
+        env_base_url=args.env_url
+    )
+
+    # Run evaluation
+    results = baseline.run_evaluation(args.task_ids)
 
     # Save results
-    with open("baseline_results.json", "w") as f:
+    with open(args.output, "w") as f:
         json.dump(results, f, indent=2)
 
-    print("Results saved to baseline_results.json")
+    print(f"\nResults saved to {args.output}")
 
 
 if __name__ == "__main__":
