@@ -188,16 +188,45 @@ async def grade_review(request: GraderRequest) -> Dict[str, Any]:
 @app.get("/grader")
 async def get_last_episode_grade() -> Dict[str, Any]:
     """
-    Return grader score for the most recently completed episode.
+    Return grader results for the latest baseline run (all tasks), or fallback
+    to the most recently completed single episode when baseline results are
+    unavailable.
 
-    This reads the shared environment state (last terminal feedback) instead of
-    requiring the caller to resend the full action payload.
+    This allows callers to retrieve one consolidated grading response after
+    running /baseline, while preserving compatibility with episode-level usage.
     """
+    # Preferred path: if a baseline artifact exists, return all task results from
+    # the latest run so callers get a full multi-task score report.
+    if _baseline_cache_file.exists():
+        try:
+            with open(_baseline_cache_file, "r", encoding="utf-8") as f:
+                payload = _normalize_baseline_payload(json.load(f))
+            results = payload.get("results", {})
+            if isinstance(results, dict) and results:
+                return {
+                    "mode": "baseline",
+                    "task_ids": payload.get("task_ids", []),
+                    "average_score": payload.get("average_score"),
+                    "provider": payload.get("provider"),
+                    "model": payload.get("model"),
+                    "seed": payload.get("seed"),
+                    "temperature": payload.get("temperature"),
+                    "results": results,
+                }
+        except Exception:
+            # Fall back to episode-grade path below if baseline payload is missing
+            # or malformed.
+            pass
+
+    # Fallback path: most recently completed single episode.
     env = _shared_env
     if not env.episode_done or env.last_terminal_feedback is None or env.current_task is None:
         raise HTTPException(
             status_code=400,
-            detail="No completed episode found. Run an episode to terminal step via /reset and /step first.",
+            detail=(
+                "No baseline results or completed episode found. "
+                "Run /baseline (all tasks) or run an episode to terminal step via /reset and /step first."
+            ),
         )
 
     feedback = env.last_terminal_feedback
@@ -206,6 +235,7 @@ async def get_last_episode_grade() -> Dict[str, Any]:
     passed = score >= task["min_passing_score"]
 
     return {
+        "mode": "episode",
         "task_id": task["task_id"],
         "score": score,
         "passed": passed,
