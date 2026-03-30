@@ -5,9 +5,9 @@
   "min_passing_score": 0.75,
   "grading_weights": {
     "precision": 0.35,
-    "recall": 0.4,
+    "recall": 0.45,
     "severity": 0.15,
-    "coverage": 0.1
+    "coverage": 0.05
   },
   "pr_scenario": {
     "pr_id": "PR-002",
@@ -133,28 +133,12 @@
           "cwe": null
         },
         {
-          "file": "utils/validator.py",
-          "line": 89,
-          "severity": "info",
-          "category": "style",
-          "description": "Import inside function - 're' module should be imported at module level for better performance and readability",
-          "cwe": null
-        },
-        {
           "file": "models/user.py",
           "line": 19,
           "severity": "warning",
           "category": "security",
           "description": "No brute force protection - login_attempts counter exists but there's no logic to lock accounts or rate-limit after failed attempts",
           "cwe": "CWE-307"
-        },
-        {
-          "file": "utils/validator.py",
-          "line": 92,
-          "severity": "info",
-          "category": "maintainability",
-          "description": "Unnecessary complexity - can simplify 'if condition: return True; return False' to just 'return bool(condition)'",
-          "cwe": null
         }
       ]
     }

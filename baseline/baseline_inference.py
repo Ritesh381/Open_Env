@@ -170,12 +170,12 @@ class BaselineAgent:
         elif task_id == "task5_async_pipeline_hard":
             task_hint = (
                 "Task focus: async pipeline integrity. "
-                "Prioritize webhook authenticity, idempotency races, and transactional balance-update correctness."
+                "Analyze broader reliability and security implications across ingestion, queue handling, and state updates."
             )
         elif task_id == "task6_data_export_hard":
             task_hint = (
-                "Task focus: secure data export. "
-                "Prioritize tenant isolation, PII exposure paths, URL access controls, and audit completeness."
+                "Task focus: secure export workflows. "
+                "Analyze broad access-control and data-governance implications across request, worker, and retrieval lifecycle."
             )
 
         prompt = f"""Review this pull request:

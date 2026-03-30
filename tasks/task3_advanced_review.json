@@ -67,6 +67,7 @@
           "50:         ORDER BY created_at DESC",
           "51:     \"\"\"",
           "52:     posts = db.execute(query, (user_id,))",
+          "52.1:   trace_tag = info.context.get('trace_tag', '')  # optional tracing only",
           "53:     return posts[:limit]"
         ],
         "deletions": [
@@ -81,7 +82,7 @@
           {
             "start_line": 45,
             "end_line": 53,
-            "content": "def resolve_user_posts(parent, info, limit=10):\n    user_id = parent.id\n    query = \"\"\"\n        SELECT * FROM posts \n        WHERE user_id = %s \n        ORDER BY created_at DESC\n    \"\"\"\n    posts = db.execute(query, (user_id,))\n    return posts[:limit]"
+            "content": "def resolve_user_posts(parent, info, limit=10):\n    user_id = parent.id\n    query = \"\"\"\n        SELECT * FROM posts \n        WHERE user_id = %s \n        ORDER BY created_at DESC\n    \"\"\"\n    posts = db.execute(query, (user_id,))\n    trace_tag = info.context.get('trace_tag', '')  # optional tracing only\n    return posts[:limit]"
           }
         ]
       },

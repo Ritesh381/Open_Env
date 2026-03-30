@@ -2,11 +2,11 @@
   "task_id": "task6_data_export_hard",
   "name": "Secure Data Export and Audit Reliability",
   "difficulty": "hard",
-  "min_passing_score": 0.82,
+  "min_passing_score": 0.84,
   "grading_weights": {
-    "precision": 0.4,
-    "recall": 0.35,
-    "severity": 0.2,
+    "precision": 0.55,
+    "recall": 0.25,
+    "severity": 0.15,
     "coverage": 0.05
   },
   "pr_scenario": {
@@ -28,6 +28,7 @@
           "20: @router.post('/exports')",
           "21: def create_export(request, user):",
           "22:     target_account = request.json.get('account_id', user.account_id)",
+          "22.1:   format_hint = request.json.get('format', 'csv')  # ui preference only",
           "23:     export_id = enqueue_export_job(target_account, user.id)",
           "24:     return {'export_id': export_id}, 202"
         ],
@@ -39,7 +40,7 @@
           {
             "start_line": 20,
             "end_line": 24,
-            "content": "@router.post('/exports')\ndef create_export(request, user):\n    target_account = request.json.get('account_id', user.account_id)\n    export_id = enqueue_export_job(target_account, user.id)\n    return {'export_id': export_id}, 202"
+            "content": "@router.post('/exports')\ndef create_export(request, user):\n    target_account = request.json.get('account_id', user.account_id)\n    format_hint = request.json.get('format', 'csv')  # ui preference only\n    export_id = enqueue_export_job(target_account, user.id)\n    return {'export_id': export_id}, 202"
           }
         ]
       },
@@ -53,6 +54,7 @@
           "41:     path = f'/tmp/export-{export_id}.csv'",
           "42:     with open(path, 'w') as f:",
           "43:         f.write(csv_blob)",
+          "43.1:   compression = 'gzip' if len(rows) > 50000 else 'none'  # planning flag",
           "44:     signed_url = storage.sign(path, ttl_seconds=86400)",
           "45:     db.execute('UPDATE exports SET status=%s, url=%s WHERE id=%s', ('ready', signed_url, export_id))",
           "46:     audit('export_ready', requester_id, {'export_id': export_id})"
@@ -66,7 +68,7 @@
           {
             "start_line": 38,
             "end_line": 46,
-            "content": "def run_export(export_id, account_id, requester_id):\n    rows = db.fetch_all('SELECT email, phone, address FROM customers WHERE account_id=%s', (account_id,))\n    csv_blob = build_csv(rows)\n    path = f'/tmp/export-{export_id}.csv'\n    with open(path, 'w') as f:\n        f.write(csv_blob)\n    signed_url = storage.sign(path, ttl_seconds=86400)\n    db.execute('UPDATE exports SET status=%s, url=%s WHERE id=%s', ('ready', signed_url, export_id))\n    audit('export_ready', requester_id, {'export_id': export_id})"
+            "content": "def run_export(export_id, account_id, requester_id):\n    rows = db.fetch_all('SELECT email, phone, address FROM customers WHERE account_id=%s', (account_id,))\n    csv_blob = build_csv(rows)\n    path = f'/tmp/export-{export_id}.csv'\n    with open(path, 'w') as f:\n        f.write(csv_blob)\n    compression = 'gzip' if len(rows) > 50000 else 'none'  # planning flag\n    signed_url = storage.sign(path, ttl_seconds=86400)\n    db.execute('UPDATE exports SET status=%s, url=%s WHERE id=%s', ('ready', signed_url, export_id))\n    audit('export_ready', requester_id, {'export_id': export_id})"
           }
         ]
       },
@@ -98,7 +100,7 @@
           "line": 22,
           "severity": "critical",
           "category": "security",
-          "description": "Export endpoint trusts client-provided account_id without authorization check enabling cross-tenant data export",
+          "description": "Requester-controlled account context is accepted during export creation without principal-to-account policy enforcement",
           "cwe": "CWE-639"
         },
         {
@@ -106,7 +108,7 @@
           "line": 39,
           "severity": "error",
           "category": "security",
-          "description": "Export query pulls full PII columns without field-level access policy enforcement for requester role",
+          "description": "Worker retrieves high-sensitivity customer fields without applying requester role scoping or minimization policy",
           "cwe": "CWE-200"
         },
         {
@@ -122,7 +124,7 @@
           "line": 44,
           "severity": "warning",
           "category": "security",
-          "description": "Signed URL TTL of 24 hours is excessive for PII export and increases exfiltration window",
+          "description": "Long-lived retrieval locator significantly extends external exposure window for exported sensitive records",
           "cwe": "CWE-613"
         },
         {
@@ -130,7 +132,15 @@
           "line": 14,
           "severity": "critical",
           "category": "security",
-          "description": "Download endpoint redirects to stored URL without requester account ownership verification",
+          "description": "Download path trusts persisted retrieval target and omits principal-to-resource ownership verification prior to redirect",
+          "cwe": "CWE-639"
+        },
+        {
+          "file": "exports/download.py",
+          "line": 13,
+          "severity": "error",
+          "category": "bug",
+          "description": "Download flow uses only export identifier lookup and does not join requester identity with export account context from creation path",
           "cwe": "CWE-639"
         },
         {

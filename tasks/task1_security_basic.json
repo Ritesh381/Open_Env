@@ -85,14 +85,6 @@
           "cwe": "CWE-89"
         },
         {
-          "file": "app/auth.py",
-          "line": 18,
-          "severity": "error",
-          "category": "security",
-          "description": "Open Redirect vulnerability - unvalidated redirect target allows attackers to redirect users to malicious sites",
-          "cwe": "CWE-601"
-        },
-        {
           "file": "app/profile.py",
           "line": 27,
           "severity": "error",

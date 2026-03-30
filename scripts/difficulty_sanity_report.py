@@ -62,6 +62,17 @@ def build_report(
         for task_id, scores in per_task_scores.items()
     }
 
+    grouped: Dict[str, List[float]] = {"easy": [], "medium": [], "hard": []}
+    for task_id, scores in per_task_scores.items():
+        if "task1_" in task_id:
+            grouped["easy"].extend(scores)
+        elif task_id.startswith("task2_") or task_id.startswith("task4_"):
+            grouped["medium"].extend(scores)
+        else:
+            grouped["hard"].extend(scores)
+
+    grouped_stats = {group: confidence_interval_95(vals) for group, vals in grouped.items()}
+
     ordering = sorted(
         task_stats.items(),
         key=lambda item: item[1]["mean"],
@@ -80,6 +91,7 @@ def build_report(
         },
         "overall": confidence_interval_95(trial_averages),
         "per_task": task_stats,
+        "grouped_means": grouped_stats,
         "mean_ordering_desc": [task_id for task_id, _ in ordering],
     }
 
@@ -104,6 +116,14 @@ def print_report(report: Dict[str, Any]) -> None:
     for task_id, stats in report["per_task"].items():
         print(
             f"- {task_id}: mean={stats['mean']:.3f}, std={stats['std']:.3f}, "
+            f"95% CI [{stats['ci95_low']:.3f}, {stats['ci95_high']:.3f}]"
+        )
+    print()
+    print("Grouped difficulty means:")
+    for group in ["easy", "medium", "hard"]:
+        stats = report["grouped_means"][group]
+        print(
+            f"- {group}: mean={stats['mean']:.3f}, std={stats['std']:.3f}, "
             f"95% CI [{stats['ci95_low']:.3f}, {stats['ci95_high']:.3f}]"
         )
     print()

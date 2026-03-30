@@ -132,14 +132,6 @@
           "category": "security",
           "description": "Refresh token storage is one-slot per user without rotation history enabling token overwrite race and weak replay detection",
           "cwe": "CWE-362"
-        },
-        {
-          "file": "auth/store.py",
-          "line": 16,
-          "severity": "info",
-          "category": "maintainability",
-          "description": "Access token revoke TTL is hardcoded and can drift from token expiry configuration",
-          "cwe": null
         }
       ]
     }

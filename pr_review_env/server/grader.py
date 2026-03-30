@@ -55,10 +55,13 @@ class ReviewGrader:
         Returns:
             ReviewFeedback with metrics
         """
+        difficulty = str(task_config.get("difficulty", "medium")).lower()
+
         # Match comments to ground truth issues
         matches, unmatched_comments, unmatched_issues = self._match_comments_to_issues(
             action.inline_comments,
-            ground_truth.issues
+            ground_truth.issues,
+            difficulty=difficulty
         )
 
         # Calculate metrics
@@ -80,6 +83,15 @@ class ReviewGrader:
         weights = task_config.get("grading_weights", {})
         score = self._calculate_weighted_score(
             precision, recall, coverage, severity_alignment, weights
+        )
+
+        # Difficulty-sensitive penalties: hard tasks punish loose findings more.
+        score = self._apply_difficulty_penalties(
+            score=score,
+            false_positives=false_positives,
+            severity_alignment=severity_alignment,
+            difficulty=difficulty,
+            matches_count=len(matches)
         )
 
         # Apply decision penalties
@@ -104,7 +116,8 @@ class ReviewGrader:
     def _match_comments_to_issues(
         self,
         comments: List[InlineComment],
-        issues: List[GroundTruthIssue]
+        issues: List[GroundTruthIssue],
+        difficulty: str = "medium"
     ) -> Tuple[List[Dict[str, Any]], List[InlineComment], List[GroundTruthIssue]]:
         """
         Match comments to ground truth issues.
@@ -129,7 +142,8 @@ class ReviewGrader:
                 # Check if this comment matches this issue
                 match_score = self._compute_match_score(comment, issue)
 
-                if match_score > best_match_score and match_score > 0.3:  # Threshold
+                threshold = self._difficulty_match_threshold(difficulty)
+                if match_score > best_match_score and match_score > threshold:
                     best_match_score = match_score
                     best_match_idx = issue_idx
 
@@ -201,6 +215,35 @@ class ReviewGrader:
         if overlap > 0:
             score += 0.1
 
+        return score
+
+    def _difficulty_match_threshold(self, difficulty: str) -> float:
+        if difficulty == "easy":
+            return 0.28
+        if difficulty == "hard":
+            return 0.45
+        return 0.35
+
+    def _apply_difficulty_penalties(
+        self,
+        score: float,
+        false_positives: int,
+        severity_alignment: float,
+        difficulty: str,
+        matches_count: int
+    ) -> float:
+        """Apply deterministic strictness based on task difficulty."""
+        if difficulty == "hard":
+            score -= min(0.28, false_positives * 0.07)
+            if matches_count > 0:
+                score -= (1.0 - severity_alignment) * 0.14
+        elif difficulty == "medium":
+            score -= min(0.12, false_positives * 0.025)
+            if matches_count > 0:
+                score -= (1.0 - severity_alignment) * 0.04
+        else:
+            # Keep easy tasks permissive.
+            score -= min(0.05, false_positives * 0.01)
         return score
 
     def _normalized_tokens(self, text: str) -> Set[str]:

@@ -2,11 +2,11 @@
   "task_id": "task5_async_pipeline_hard",
   "name": "Async Pipeline Security and Idempotency",
   "difficulty": "hard",
-  "min_passing_score": 0.8,
+  "min_passing_score": 0.82,
   "grading_weights": {
-    "precision": 0.4,
-    "recall": 0.35,
-    "severity": 0.2,
+    "precision": 0.5,
+    "recall": 0.3,
+    "severity": 0.15,
     "coverage": 0.05
   },
   "pr_scenario": {
@@ -55,7 +55,9 @@
           "42:     if redis.get(f'evt:{event_id}'):",
           "43:         return",
           "44:     redis.setex(f'evt:{event_id}', 60, '1')",
+          "44.1:   parsed = safe_parse(payload)  # returns {} on malformed payload",
           "45:     data = json.loads(payload)",
+          "45.1:   source = data.get('source', 'gateway')  # metrics-only tag",
           "46:     charge_id = data['charge_id']",
           "47:     amount = data['amount']",
           "48:     apply_balance_update(charge_id, amount)",
@@ -70,7 +72,7 @@
           {
             "start_line": 41,
             "end_line": 49,
-            "content": "def process_event(event_id, payload):\n    if redis.get(f'evt:{event_id}'):\n        return\n    redis.setex(f'evt:{event_id}', 60, '1')\n    data = json.loads(payload)\n    charge_id = data['charge_id']\n    amount = data['amount']\n    apply_balance_update(charge_id, amount)\n    audit_log('processed', event_id)"
+            "content": "def process_event(event_id, payload):\n    if redis.get(f'evt:{event_id}'):\n        return\n    redis.setex(f'evt:{event_id}', 60, '1')\n    parsed = safe_parse(payload)  # returns {} on malformed payload\n    data = json.loads(payload)\n    source = data.get('source', 'gateway')  # metrics-only tag\n    charge_id = data['charge_id']\n    amount = data['amount']\n    apply_balance_update(charge_id, amount)\n    audit_log('processed', event_id)"
           }
         ]
       },
@@ -103,7 +105,7 @@
           "line": 33,
           "severity": "critical",
           "category": "security",
-          "description": "Signature validation ignores payload and timestamp allowing replayed requests with stale signatures",
+          "description": "Webhook authenticity check is detached from request body freshness, permitting stale-but-formatted events to be accepted",
           "cwe": "CWE-294"
         },
         {
@@ -111,7 +113,7 @@
           "line": 42,
           "severity": "error",
           "category": "bug",
-          "description": "Idempotency check and set are non-atomic, enabling duplicate event processing under concurrent workers",
+          "description": "Event deduplication relies on separate cache read/write operations, allowing duplicate processing under parallel workers",
           "cwe": "CWE-362"
         },
         {
@@ -119,7 +121,7 @@
           "line": 44,
           "severity": "warning",
           "category": "security",
-          "description": "Dedup TTL of 60 seconds is too short for payment provider retries causing replay acceptance after expiration",
+          "description": "Short dedup retention window allows previously seen delivery identifiers to be processed again after routine retry delays",
           "cwe": "CWE-613"
         },
         {
@@ -135,7 +137,7 @@
           "line": 57,
           "severity": "error",
           "category": "bug",
-          "description": "Read-modify-write balance update is not transactional and can lose increments under concurrent updates",
+          "description": "Balance mutation uses non-transactional read/compute/write sequence and can overwrite concurrent ledger changes",
           "cwe": "CWE-362"
         },
         {
