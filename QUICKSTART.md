@@ -60,14 +60,20 @@ Test endpoints:
 # Health check
 curl http://localhost:8000/health
 
+curl -sS "https://Saptak225-pr-review-openenv.hf.space/health"
+
 # List tasks
 curl http://localhost:8000/tasks
 
-# Get cached baseline scores
-curl http://localhost:8000/baseline
+curl -sS "https://Saptak225-pr-review-openenv.hf.space/tasks"
 
-# Trigger live baseline refresh (runs inference.py; requires HF_TOKEN, MODEL_NAME, API_BASE_URL)
-curl "http://localhost:8000/baseline?refresh=true"
+
+# Get live baseline scores (runs inference; requires HF_TOKEN, MODEL_NAME)
+curl http://localhost:8000/baseline
+curl -sS "https://Saptak225-pr-review-openenv.hf.space/baseline"
+
+# (Optional) Pass secrets/config explicitly if your server/container doesn't already have them
+curl "http://localhost:8000/baseline?hf_token=$HF_TOKEN&model=$MODEL_NAME&api_base_url=$API_BASE_URL"
 
 # Reset environment
 curl -X POST http://localhost:8000/reset \

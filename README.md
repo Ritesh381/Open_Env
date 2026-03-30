@@ -365,7 +365,7 @@ Canonical artifact served by `/baseline`: `inference_results.json`
 
 ### Hackathon-Required Endpoints
 
-- `GET /baseline` - Returns cached baseline results; use `?refresh=true` to trigger live baseline run
+- `GET /baseline` - Returns live baseline results (runs inference each time). Requires `HF_TOKEN` and `MODEL_NAME` in the Space container.
 - `POST /grader` - Standalone deterministic grading endpoint with request body:
   - `{ "task_id": "...", "action": { ... } }`
 - `GET /tasks` - Lists tasks and returns machine-readable `Action` JSON schema

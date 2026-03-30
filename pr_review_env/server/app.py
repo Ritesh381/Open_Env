@@ -4,9 +4,11 @@ FastAPI server for PR Code Review Assistant.
 Implements OpenEnv-compliant server with additional hackathon endpoints.
 """
 
+import asyncio
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
@@ -84,26 +86,36 @@ async def get_baseline_scores(
     refresh: bool = False,
     provider: str = "openai",
     model: Optional[str] = None,
+    hf_token: Optional[str] = None,
+    api_base_url: Optional[str] = None,
     env_url: str = "http://localhost:8000"
 ) -> Dict[str, Any]:
     """
-    Return baseline scores for all tasks.
+    Return baseline scores for all tasks by running live inference.
 
-    By default this returns cached results. Set refresh=true to trigger inference.
+    Note: `refresh` is kept only for backward compatibility; this endpoint always runs
+    inference and returns the latest `inference_results.json` output.
     """
-    # Fast path: cached baseline artifact from inference_results.json
-    if not refresh and _baseline_cache_file.exists():
-        with open(_baseline_cache_file, "r", encoding="utf-8") as f:
-            payload = _normalize_baseline_payload(json.load(f))
-        payload["source"] = "cache"
-        return payload
-
-    # Refresh path: run inference.py to regenerate inference_results.json.
-    try:
+    # Run inference.py to regenerate inference_results.json.
+    # IMPORTANT: run the subprocess off the event loop. A blocking subprocess.run()
+    # here would deadlock single-worker Uvicorn: inference.py calls this same server
+    # (/tasks, /reset, /step) and would time out waiting for a free worker.
+    def _run_inference_subprocess() -> None:
+        inference_py = _project_root / "inference.py"
+        # Pass secrets/config explicitly to the subprocess.
+        # This avoids relying on whatever environment variables the server process
+        # had at startup (your shell exports only affect the current terminal).
+        inference_env = os.environ.copy()
+        if hf_token is not None:
+            inference_env["HF_TOKEN"] = hf_token
+        if model is not None:
+            inference_env["MODEL_NAME"] = model
+        if api_base_url is not None:
+            inference_env["API_BASE_URL"] = api_base_url
         subprocess.run(
             [
-                "python",
-                "inference.py",
+                sys.executable,
+                str(inference_py),
                 "--env-url",
                 env_url,
                 "--output",
@@ -112,7 +124,12 @@ async def get_baseline_scores(
             check=True,
             capture_output=True,
             text=True,
+            cwd=str(_project_root),
+            env=inference_env,
         )
+
+    try:
+        await asyncio.to_thread(_run_inference_subprocess)
     except subprocess.CalledProcessError as e:
         detail = (e.stderr or e.stdout or str(e))[-4000:]
         raise HTTPException(
