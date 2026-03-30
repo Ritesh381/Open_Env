@@ -77,6 +77,9 @@ curl -sS "http://localhost:8000/grader"
 # or on Space:
 curl -sS "https://Saptak225-pr-review-openenv.hf.space/grader"
 
+# Use your own AI/model
+curl -sS "https://Saptak225-pr-review-openenv.hf.space/baseline?model=<THEIR_MODEL>&api_base_url=<THEIR_API_BASE_URL>&hf_token=<THEIR_HF_TOKEN>"
+
 # (Optional) Pass secrets/config explicitly if your server/container doesn't already have them
 curl "http://localhost:8000/baseline?hf_token=$HF_TOKEN&model=$MODEL_NAME&api_base_url=$API_BASE_URL"
 
