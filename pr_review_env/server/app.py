@@ -6,6 +6,7 @@ Implements OpenEnv-compliant server with additional hackathon endpoints.
 
 import json
 import os
+import subprocess
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
@@ -20,7 +21,7 @@ from .grader import ReviewGrader
 # Use a shared environment instance so reset/step state persists across HTTP requests.
 _shared_env = PRReviewEnvironment()
 _project_root = Path(__file__).parent.parent.parent
-_baseline_cache_file = _project_root / "baseline_results_latest.json"
+_baseline_cache_file = _project_root / "inference_results.json"
 
 
 def _default_task_ids() -> List[str]:
@@ -88,52 +89,45 @@ async def get_baseline_scores(
 
     By default this returns cached results. Set refresh=true to trigger inference.
     """
-    # Fast path: cached baseline artifact
+    # Fast path: cached baseline artifact from inference_results.json
     if not refresh and _baseline_cache_file.exists():
         with open(_baseline_cache_file, "r", encoding="utf-8") as f:
             payload = _normalize_baseline_payload(json.load(f))
         payload["source"] = "cache"
         return payload
 
-    # Refresh path: run baseline inference through the baseline script class.
+    # Refresh path: run inference.py to regenerate inference_results.json.
     try:
-        from baseline.baseline_inference import BaselineAgent
-    except Exception as e:
+        completed = subprocess.run(
+            [
+                "python",
+                "inference.py",
+                "--env-url",
+                env_url,
+                "--output",
+                str(_baseline_cache_file),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as e:
+        detail = e.stderr or e.stdout or str(e)
         raise HTTPException(
             status_code=500,
-            detail=f"Unable to import baseline agent: {e}"
+            detail=f"Unable to run inference.py for baseline: {detail}",
         ) from e
 
-    provider_env_key = "OPENAI_API_KEY" if provider == "openai" else "GROQ_API_KEY"
-    if not os.getenv(provider_env_key):
-        if _baseline_cache_file.exists():
-            with open(_baseline_cache_file, "r", encoding="utf-8") as f:
-                payload = _normalize_baseline_payload(json.load(f))
-            payload["source"] = "cache_fallback_missing_api_key"
-            return payload
+    if not _baseline_cache_file.exists():
         raise HTTPException(
-            status_code=503,
-            detail=(
-                f"Missing {provider_env_key}. Set it to run live baseline, "
-                "or call /baseline without refresh after generating cache."
-            )
+            status_code=500,
+            detail="inference.py completed but inference_results.json was not created.",
         )
 
-    task_ids = _default_task_ids()
-    if not task_ids:
-        raise HTTPException(status_code=500, detail="No tasks found for baseline run.")
-
-    baseline = BaselineAgent(provider=provider, model=model, env_base_url=env_url)
-    results = baseline.run_evaluation(task_ids)
-    results["provider"] = provider
-    results["task_ids"] = task_ids
-    results = _normalize_baseline_payload(results)
-
-    with open(_baseline_cache_file, "w", encoding="utf-8") as f:
-        json.dump(results, f, indent=2)
-
-    results["source"] = "live"
-    return results
+    with open(_baseline_cache_file, "r", encoding="utf-8") as f:
+        payload = _normalize_baseline_payload(json.load(f))
+    payload["source"] = "live"
+    return payload
 
 
 @app.post("/grader")
