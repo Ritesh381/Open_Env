@@ -331,7 +331,9 @@ print(f"Passed: {result['metadata']['passed']}")
 # Set required variables (OpenAI-compatible client via HF router)
 export API_BASE_URL="https://router.huggingface.co/v1"
 export MODEL_NAME="openai/gpt-oss-120b"
-export HF_TOKEN="your-hf-token"
+# Auth: provide either OPENAI_API_KEY (preferred) or HF_TOKEN
+export OPENAI_API_KEY="your-openai-api-key"
+# export HF_TOKEN="your-hf-token"
 
 # Run inference baseline against a running env server
 python3 inference.py \
@@ -365,7 +367,7 @@ Canonical artifact served by `/baseline`: `inference_results.json`
 
 ### Hackathon-Required Endpoints
 
-- `GET /baseline` - Returns live baseline results (runs inference each time). Requires `HF_TOKEN` and `MODEL_NAME` in the Space container.
+- `GET /baseline` - Returns live baseline results (runs inference each time). Requires `OPENAI_API_KEY` or `HF_TOKEN` and `MODEL_NAME` in the Space container.
 - `POST /grader` - Standalone deterministic grading endpoint with request body:
   - `{ "task_id": "...", "action": { ... } }`
 - `GET /tasks` - Lists tasks and returns machine-readable `Action` JSON schema

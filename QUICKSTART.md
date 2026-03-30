@@ -68,7 +68,7 @@ curl http://localhost:8000/tasks
 curl -sS "https://Saptak225-pr-review-openenv.hf.space/tasks"
 
 
-# Get live baseline scores (runs inference; requires HF_TOKEN, MODEL_NAME)
+# Get live baseline scores (runs inference; requires OPENAI_API_KEY or HF_TOKEN, MODEL_NAME)
 curl http://localhost:8000/baseline
 curl -sS "https://Saptak225-pr-review-openenv.hf.space/baseline"
 
@@ -77,11 +77,11 @@ curl -sS "http://localhost:8000/grader"
 # or on Space:
 curl -sS "https://Saptak225-pr-review-openenv.hf.space/grader"
 
-# Use your own AI/model
-curl -sS "https://Saptak225-pr-review-openenv.hf.space/baseline?model=<THEIR_MODEL>&api_base_url=<THEIR_API_BASE_URL>&hf_token=<THEIR_HF_TOKEN>"
+# Use your own AI/model (provide either OPENAI_API_KEY or hf_token)
+curl -sS "https://Saptak225-pr-review-openenv.hf.space/baseline?model=<THEIR_MODEL>&api_base_url=<THEIR_API_BASE_URL>&openai_api_key=<THEIR_OPENAI_API_KEY>"
 
 # (Optional) Pass secrets/config explicitly if your server/container doesn't already have them
-curl "http://localhost:8000/baseline?hf_token=$HF_TOKEN&model=$MODEL_NAME&api_base_url=$API_BASE_URL"
+curl "http://localhost:8000/baseline?openai_api_key=$OPENAI_API_KEY&model=$MODEL_NAME&api_base_url=$API_BASE_URL"
 
 # Reset environment
 curl -X POST http://localhost:8000/reset \
@@ -95,7 +95,9 @@ curl -X POST http://localhost:8000/reset \
 # Set required variables (OpenAI-compatible client via HF router)
 export API_BASE_URL="https://router.huggingface.co/v1"
 export MODEL_NAME="openai/gpt-oss-120b"
-export HF_TOKEN="your-hf-token"
+# Auth: provide either OPENAI_API_KEY (preferred) or HF_TOKEN
+export OPENAI_API_KEY="your-openai-api-key"
+# export HF_TOKEN="your-hf-token"
 
 # Run inference evaluation against local env server
 python3 inference.py --env-url http://localhost:8000 --output inference_results.json

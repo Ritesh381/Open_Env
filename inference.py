@@ -4,7 +4,7 @@ OpenEnv inference runner for PR Review environment.
 MANDATORY hackathon variables:
 - API_BASE_URL: OpenAI-compatible LLM endpoint
 - MODEL_NAME: model identifier
-- HF_TOKEN: API key
+- OPENAI_API_KEY or HF_TOKEN: API key (both supported)
 """
 
 import argparse
@@ -18,7 +18,8 @@ import requests
 from openai import OpenAI
 
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
-API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
+# Prefer OpenAI-style key name, but allow Hugging Face token as well.
+API_KEY = os.getenv("OPENAI_API_KEY") or os.getenv("HF_TOKEN") or os.getenv("API_KEY")
 MODEL_NAME = os.getenv("MODEL_NAME")
 ENV_URL = os.getenv("OPENENV_BASE_URL", "http://localhost:8000")
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.0"))
@@ -77,7 +78,7 @@ Rules:
 def require_env() -> None:
     missing = []
     if not API_KEY:
-        missing.append("HF_TOKEN")
+        missing.append("OPENAI_API_KEY or HF_TOKEN")
     if not MODEL_NAME:
         missing.append("MODEL_NAME")
     if missing:

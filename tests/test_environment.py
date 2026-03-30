@@ -1,4 +1,4 @@
-from pr_review_env import Action, InlineComment, PRReviewEnvironment, ReviewDecision
+from pr_review_env import Action, InlineComment, PRReviewEnvironment, ReviewDecision, Reward
 
 
 def test_multistep_episode_progression():
@@ -26,7 +26,7 @@ def test_multistep_episode_progression():
     assert mid.done is False
     assert mid.feedback is None
     assert mid.metadata["finalized"] is False
-    assert isinstance(mid.reward, float)
+    assert isinstance(mid.reward, Reward)
 
     final_action = Action(
         inline_comments=[
@@ -87,6 +87,5 @@ def test_intermediate_reward_penalizes_duplicates():
         submit=False,
     )
     r2 = env.step(action2).reward
-
-    assert isinstance(r1, float) and isinstance(r2, float)
-    assert r2 <= r1
+    assert isinstance(r1, Reward) and isinstance(r2, Reward)
+    assert float(r2) <= float(r1)

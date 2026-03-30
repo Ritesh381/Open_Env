@@ -13,6 +13,7 @@ from .models import (
     PRState,
     PRStateForAgent,
     ReviewFeedback,
+    Reward,
 )
 
 from .server.pr_review_environment import PRReviewEnvironment
@@ -28,5 +29,6 @@ __all__ = [
     "PRState",
     "PRStateForAgent",
     "ReviewFeedback",
+    "Reward",
     "PRReviewEnvironment",
 ]

@@ -5,7 +5,7 @@ These models define the action and observation spaces for the OpenEnv interface.
 """
 
 from typing import List, Optional, Literal, Dict, Any
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, RootModel
 from openenv.core.env_server.types import (
     Action as BaseAction,
     Observation as BaseObservation,
@@ -173,6 +173,27 @@ class ReviewFeedback(BaseModel):
     )
 
 
+class Reward(RootModel[float]):
+    """
+    Typed reward wrapper.
+
+    Uses a RootModel so it JSON-serializes as a number (so OpenEnv clients expecting
+    `reward: float | None` keep working), while still exposing a dedicated typed model.
+    """
+
+    def __float__(self) -> float:
+        return float(self.root)
+
+    @property
+    def value(self) -> float:
+        """Convenience accessor for the underlying numeric reward."""
+        return float(self.root)
+
+    def __format__(self, format_spec: str) -> str:
+        # Allow formatting like `f"{reward:.2f}"`.
+        return format(float(self.root), format_spec)
+
+
 class PRStateForAgent(BaseModel):
     """PR state without ground truth (what the agent sees)."""
 
@@ -195,5 +216,5 @@ class Observation(BaseObservation):
     )
     # Required by BaseObservation
     done: bool = Field(default=False, description="Episode terminated")
-    reward: Optional[float] = Field(default=None, description="Reward from last action")
+    reward: Optional[Reward] = Field(default=None, description="Reward from last action")
     # metadata is inherited from BaseObservation

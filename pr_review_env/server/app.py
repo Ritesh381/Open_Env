@@ -86,6 +86,7 @@ async def get_baseline_scores(
     refresh: bool = False,
     provider: str = "openai",
     model: Optional[str] = None,
+    openai_api_key: Optional[str] = None,
     hf_token: Optional[str] = None,
     api_base_url: Optional[str] = None,
     env_url: str = "http://localhost:8000"
@@ -106,6 +107,8 @@ async def get_baseline_scores(
         # This avoids relying on whatever environment variables the server process
         # had at startup (your shell exports only affect the current terminal).
         inference_env = os.environ.copy()
+        if openai_api_key is not None:
+            inference_env["OPENAI_API_KEY"] = openai_api_key
         if hf_token is not None:
             inference_env["HF_TOKEN"] = hf_token
         if model is not None:
