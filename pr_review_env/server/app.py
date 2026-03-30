@@ -65,6 +65,17 @@ app = create_app(
 # Additional Hackathon-Required Endpoints
 # ============================================================================
 
+@app.get("/")
+async def root() -> Dict[str, Any]:
+    """Friendly root endpoint for Space UI and quick manual checks."""
+    return {
+        "message": "PR Review OpenEnv is running.",
+        "docs": "/docs",
+        "health": "/health",
+        "reset": "/reset",
+        "tasks": "/tasks",
+    }
+
 @app.get("/baseline")
 async def get_baseline_scores(
     refresh: bool = False,
