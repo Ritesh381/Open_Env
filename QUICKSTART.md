@@ -72,6 +72,11 @@ curl -sS "https://Saptak225-pr-review-openenv.hf.space/tasks"
 curl http://localhost:8000/baseline
 curl -sS "https://Saptak225-pr-review-openenv.hf.space/baseline"
 
+# /grader endpoint that returns the grader score for the last completed episode
+curl -sS "http://localhost:8000/grader"
+# or on Space:
+curl -sS "https://Saptak225-pr-review-openenv.hf.space/grader"
+
 # (Optional) Pass secrets/config explicitly if your server/container doesn't already have them
 curl "http://localhost:8000/baseline?hf_token=$HF_TOKEN&model=$MODEL_NAME&api_base_url=$API_BASE_URL"
 

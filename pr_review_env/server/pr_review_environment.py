@@ -30,7 +30,11 @@ class PRReviewEnvironment(Environment):
         self.max_steps = 5
         self.submitted_inline_comments = []
         self.submitted_general_comments = []
+        # last_feedback tracks intermediate grading signal for shaping.
         self.last_feedback = None
+        # last_terminal_feedback stores the final grader feedback for the latest
+        # completed episode so that it can be queried after the fact (e.g. via /grader).
+        self.last_terminal_feedback = None
         self.reviewed_files = set()
         self.files_with_issues = set()
 
@@ -117,6 +121,7 @@ class PRReviewEnvironment(Environment):
         self.submitted_inline_comments = []
         self.submitted_general_comments = []
         self.last_feedback = None
+        self.last_terminal_feedback = None
         self.reviewed_files = set()
 
         # Create observation (without ground truth for agent)
@@ -194,6 +199,8 @@ class PRReviewEnvironment(Environment):
             )
             reward = self._compute_reward(feedback, cumulative_action)
             self.episode_done = True
+            # Persist terminal feedback so it can be queried after the episode.
+            self.last_terminal_feedback = feedback
         else:
             # Partial-trajectory reward: encourage new signal over previous step.
             partial_feedback = self.grader.grade_review(

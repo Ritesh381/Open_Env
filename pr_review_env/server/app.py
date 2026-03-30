@@ -185,6 +185,35 @@ async def grade_review(request: GraderRequest) -> Dict[str, Any]:
     }
 
 
+@app.get("/grader")
+async def get_last_episode_grade() -> Dict[str, Any]:
+    """
+    Return grader score for the most recently completed episode.
+
+    This reads the shared environment state (last terminal feedback) instead of
+    requiring the caller to resend the full action payload.
+    """
+    env = _shared_env
+    if not env.episode_done or env.last_terminal_feedback is None or env.current_task is None:
+        raise HTTPException(
+            status_code=400,
+            detail="No completed episode found. Run an episode to terminal step via /reset and /step first.",
+        )
+
+    feedback = env.last_terminal_feedback
+    task = env.current_task
+    score = feedback.score
+    passed = score >= task["min_passing_score"]
+
+    return {
+        "task_id": task["task_id"],
+        "score": score,
+        "passed": passed,
+        "min_passing_score": task["min_passing_score"],
+        "feedback": feedback.model_dump(),
+    }
+
+
 @app.get("/tasks")
 async def list_tasks() -> Dict[str, Any]:
     """
