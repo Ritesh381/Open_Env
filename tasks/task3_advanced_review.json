@@ -160,7 +160,7 @@
         },
         {
           "file": "workers/task_processor.py",
-          "line": 84,
+          "line": 83,
           "severity": "warning",
           "category": "maintainability",
           "description": "Silent exception swallowing - catches all exceptions and only logs them without re-raising or alerting, making debugging difficult and hiding system failures",

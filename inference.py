@@ -25,6 +25,14 @@ ENV_URL = os.getenv("OPENENV_BASE_URL", "http://localhost:8000")
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.0"))
 MAX_TOKENS = int(os.getenv("MAX_TOKENS", "3072"))
 DEFAULT_OUTPUT = "inference_results.json"
+# Total characters of hunk `content` to include per file (large PRs truncate deterministically).
+PROMPT_MAX_HUNK_CHARS = int(os.getenv("PROMPT_MAX_HUNK_CHARS", "12000"))
+# Second LLM pass for task8: candidates then final JSON (set INFERENCE_TASK8_TWO_PASS=1).
+INFERENCE_TASK8_TWO_PASS = os.getenv("INFERENCE_TASK8_TWO_PASS", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
 
 VALID_SEVERITIES = {"info", "warning", "error", "critical"}
 VALID_INLINE_CATEGORIES = {
@@ -40,7 +48,7 @@ TASK_COMMENT_BUDGET: Dict[str, int] = {
     "task4_session_auth_medium": 7,
     "task5_async_pipeline_hard": 8,
     "task6_data_export_hard": 8,
-    "task7_pr_review_dvr_recorder": 8,
+    "task7_pr_review_dvr_recorder": 6,
     "task8_expert_security_review": 15
 }
 
@@ -74,6 +82,9 @@ Rules:
 - Be concise and evidence-based.
 - Focus on high-impact findings.
 - Avoid duplicate comments on the same root cause.
+- For every inline comment, line_number MUST be an integer taken from the diff line prefixes in the prompt
+  (e.g. the line labeled "42: ..." uses line_number 42). Do not guess line numbers.
+- When hunks are provided, you may also anchor to start_line/end_line shown for each hunk.
 """
 
 
@@ -114,7 +125,9 @@ def _task_hint(task_id: str) -> str:
             "Look for authorization gaps, cache invalidation/TTL, thread-safety, "
             "exception swallowing, N+1 queries, and cross-tenant data access risks. "
             "Use concrete inline findings mapped to grader categories such as security, bug, performance, "
-            "and maintainability (avoid vague labels)."
+            "and maintainability (avoid vague labels). "
+            "On try/except blocks, separate findings: e.g. logging-without-reraise (anchor near the log line) "
+            "vs missing retry/backoff (anchor near pass or exit of the except block)."
         )
     if task_id == "task4_session_auth_medium":
         return (
@@ -133,14 +146,16 @@ def _task_hint(task_id: str) -> str:
         return (
             "Focus: secure data export workflows. "
             "Check authorization/tenant scoping, PII access controls, temp file safety, "
-            "download ownership checks, and redirect/path traversal risks."
+            "download ownership checks, and redirect/path traversal risks. "
+            "Use categories security, bug, or performance where applicable; cite exact diff line numbers."
         )
     if task_id == "task7_pr_review_dvr_recorder":
         return (
-            "Focus: live stream / DVR recorder frontend (JavaScript). "
-            "Look for performance and memory issues: Blob/MediaRecorder usage, "
-            "object URL lifecycle (revokeObjectURL), buffering recorded chunks, "
-            "MutationObserver scope and subtree cost in SPAs, and seek/DVR hot paths."
+            "This is a small frontend PR: prefer 2–4 high-confidence findings only. "
+            "Focus: performance and memory in the DVR/live recorder (JavaScript)—Blob/MediaRecorder, "
+            "rebuilding blobs from recordedChunks on hot paths, object URL lifecycle (createObjectURL/revokeObjectURL), "
+            "MutationObserver with subtree observation cost in SPAs. "
+            "Do not add generic style or unrelated backend/security comments."
         )
     if task_id == "task8_expert_security_review":
         return (
@@ -157,6 +172,32 @@ def _task_hint(task_id: str) -> str:
 def _severity_rank(sev: str) -> int:
     order = {"info": 0, "warning": 1, "error": 2, "critical": 3}
     return order.get(sev, 1)
+
+
+def _truncate_hunk_content(content: str, max_chars: int) -> str:
+    if max_chars <= 0 or len(content) <= max_chars:
+        return content
+    return content[: max_chars - 28] + "\n... [hunk truncated] ..."
+
+
+TASK8_SCAN_SYSTEM = """You are a security-focused code reviewer scanning a PR.
+Output ONLY valid JSON:
+{
+  "candidates": [
+    {
+      "file_path": "string",
+      "line_number": 123,
+      "theme": "one-sentence issue",
+      "category": "security|bug|performance|style|maintainability|testing|documentation",
+      "severity": "info|warning|error|critical"
+    }
+  ]
+}
+Rules:
+- List every plausible issue you see (aim for breadth); a second pass will refine.
+- line_number must match a line prefix from the user diff (integer).
+- No markdown, no prose outside JSON.
+"""
 
 
 def build_prompt(pr_state: Dict[str, Any], task_id: str) -> str:
@@ -190,6 +231,25 @@ def build_prompt(pr_state: Dict[str, Any], task_id: str) -> str:
         if deletions:
             lines.append("Deleted lines:")
             lines.extend(f"- {d}" for d in deletions)
+
+        hunks = file_obj.get("hunks") or []
+        if isinstance(hunks, list) and hunks:
+            lines.append("Hunks (full unified diff):")
+            hunk_budget = PROMPT_MAX_HUNK_CHARS
+            for h in hunks:
+                if hunk_budget <= 0:
+                    lines.append("  ... remaining hunks omitted for this file (size budget)")
+                    break
+                if not isinstance(h, dict):
+                    continue
+                sl = h.get("start_line", "?")
+                el = h.get("end_line", "?")
+                raw = h.get("content")
+                body = str(raw) if raw is not None else ""
+                chunk = _truncate_hunk_content(body, hunk_budget)
+                lines.append(f"  @@ lines {sl}-{el} @@")
+                lines.extend(f"    {hl}" for hl in chunk.split("\n"))
+                hunk_budget -= len(chunk)
 
     lines.append("\nReturn JSON only. No markdown.")
     return "\n".join(lines)
@@ -337,7 +397,7 @@ def _is_security_comment(comment: Dict[str, Any]) -> bool:
     keys = ("sql", "injection", "xss", "csrf", "auth", "token", "redirect", "sanitize", "escape")
     return any(k in text for k in keys)
 
-def _task3_category_severity_adjust(comment: Dict[str, Any]) -> Dict[str, Any]:
+def _inline_category_severity_adjust(comment: Dict[str, Any]) -> Dict[str, Any]:
     text = " ".join(
         [
             str(comment.get("comment", "")),
@@ -366,6 +426,38 @@ def _task3_category_severity_adjust(comment: Dict[str, Any]) -> Dict[str, Any]:
     comment["category"] = category
     comment["severity"] = severity
     return comment
+
+
+def _is_dvr_performance_comment(comment: Dict[str, Any]) -> bool:
+    text = " ".join(
+        [
+            str(comment.get("comment", "")),
+            str(comment.get("suggested_fix", "")),
+            str(comment.get("category", "")),
+        ]
+    ).lower()
+    keys = (
+        "blob",
+        "mediarecorder",
+        "webm",
+        "chunk",
+        "memory",
+        "leak",
+        "observer",
+        "mutation",
+        "subtree",
+        "dvr",
+        "objecturl",
+        "createobjecturl",
+        "revokeobjecturl",
+        "recorded",
+        "performance",
+        "cpu",
+        "layout",
+        "spa",
+    )
+    return any(k in text for k in keys)
+
 
 def _post_filter_inline_comments(inline: List[Dict[str, Any]], task_id: str) -> List[Dict[str, Any]]:
     if not inline:
@@ -436,7 +528,18 @@ def _post_filter_inline_comments(inline: List[Dict[str, Any]], task_id: str) -> 
             filtered = auth_aligned
 
     if task_id == "task3_advanced_review":
-        filtered = [_task3_category_severity_adjust(c) for c in filtered]
+        filtered = [_inline_category_severity_adjust(c) for c in filtered]
+
+    if task_id == "task6_data_export_hard":
+        filtered = [_inline_category_severity_adjust(c) for c in filtered]
+
+    if task_id == "task8_expert_security_review":
+        filtered = [_inline_category_severity_adjust(c) for c in filtered]
+
+    if task_id == "task7_pr_review_dvr_recorder":
+        dvr_aligned = [c for c in filtered if _is_dvr_performance_comment(c)]
+        if dvr_aligned:
+            filtered = dvr_aligned
 
     return filtered
 
@@ -527,11 +630,13 @@ class InferenceRunner:
         output: str,
         task_ids: Optional[List[str]] = None,
         temperature: float = TEMPERATURE,
+        task8_two_pass: bool = False,
     ) -> None:
         self.env_url = env_url.rstrip("/")
         self.output = output
         self.task_ids = task_ids
         self.temperature = temperature
+        self.task8_two_pass = bool(task8_two_pass)
         self.http = requests.Session()
         self.client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
         self.task_thresholds: Dict[str, float] = {}
@@ -548,9 +653,77 @@ class InferenceRunner:
             return self.task_ids
         return [t["task_id"] for t in tasks if isinstance(t, dict) and t.get("task_id")]
 
-    def _review_with_model(self, pr_state: Dict[str, Any], task_id: str) -> Dict[str, Any]:
+    def _review_task8_two_pass(self, pr_state: Dict[str, Any], budget: int) -> Dict[str, Any]:
+        """Optional scan + finalize pipeline for dense security PRs."""
+        prompt = build_prompt(pr_state, "task8_expert_security_review")
+        max_tokens_try = MAX_TOKENS
+        last_err: Optional[Union[json.JSONDecodeError, ValueError]] = None
+        candidates: List[Dict[str, Any]] = []
+
+        for attempt in range(2):
+            try:
+                scan = self.client.chat.completions.create(
+                    model=MODEL_NAME,
+                    messages=[
+                        {"role": "system", "content": TASK8_SCAN_SYSTEM},
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=self.temperature,
+                    max_tokens=min(max_tokens_try, 4096),
+                    response_format={"type": "json_object"},
+                )
+                raw_scan = parse_json_response(scan.choices[0].message.content or "{}")
+                cand = raw_scan.get("candidates")
+                if isinstance(cand, list):
+                    candidates = [x for x in cand if isinstance(x, dict)]
+                break
+            except (json.JSONDecodeError, ValueError) as e:
+                last_err = e
+                max_tokens_try = min(max(max_tokens_try * 2, 2048), 8192)
+
+        merge_user = (
+            prompt
+            + "\n\n---\nInitial scan candidates (merge, dedupe, drop false positives; "
+            "output the final review JSON per the main schema):\n"
+            + json.dumps({"candidates": candidates}, ensure_ascii=False)
+        )
+        max_tokens_try = MAX_TOKENS
+        for attempt in range(3):
+            try:
+                completion = self.client.chat.completions.create(
+                    model=MODEL_NAME,
+                    messages=[
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": merge_user},
+                    ],
+                    temperature=self.temperature,
+                    max_tokens=max_tokens_try,
+                    response_format={"type": "json_object"},
+                )
+                content = completion.choices[0].message.content or "{}"
+                raw = parse_json_response(content)
+                if isinstance(raw, dict):
+                    raw["task_id"] = "task8_expert_security_review"
+                return normalize_action(raw, max_inline_comments=budget)
+            except (json.JSONDecodeError, ValueError) as e:
+                last_err = e
+                print(
+                    f"Warning: task8 merge JSON parse failed "
+                    f"(attempt {attempt + 1}/3, max_tokens={max_tokens_try}): {e}",
+                    flush=True,
+                )
+                max_tokens_try = min(max(max_tokens_try * 2, 2048), 8192)
+
+        print(
+            f"Warning: task8 two-pass merge failed, falling back to single-pass: {last_err}",
+            flush=True,
+        )
+        return self._review_with_model_single(pr_state, "task8_expert_security_review", budget)
+
+    def _review_with_model_single(
+        self, pr_state: Dict[str, Any], task_id: str, budget: int
+    ) -> Dict[str, Any]:
         prompt = build_prompt(pr_state, task_id)
-        budget = TASK_COMMENT_BUDGET.get(task_id, 8)
         max_tokens_try = MAX_TOKENS
         last_err: Optional[Union[json.JSONDecodeError, ValueError]] = None
 
@@ -578,7 +751,6 @@ class InferenceRunner:
                     f"(attempt {attempt + 1}/3, max_tokens={max_tokens_try}): {e}",
                     flush=True,
                 )
-                # Truncation often yields "Unterminated string"; give the model more room.
                 max_tokens_try = min(max(max_tokens_try * 2, 2048), 8192)
 
         print(
@@ -595,6 +767,14 @@ class InferenceRunner:
             },
         }
         return normalize_action(fallback, max_inline_comments=budget)
+
+    def _review_with_model(self, pr_state: Dict[str, Any], task_id: str) -> Dict[str, Any]:
+        budget = TASK_COMMENT_BUDGET.get(task_id, 8)
+        if task_id == "task8_expert_security_review" and (
+            INFERENCE_TASK8_TWO_PASS or self.task8_two_pass
+        ):
+            return self._review_task8_two_pass(pr_state, budget)
+        return self._review_with_model_single(pr_state, task_id, budget)
 
     def run(self) -> Dict[str, Any]:
         task_ids = self._discover_tasks()
@@ -689,6 +869,12 @@ def parse_args() -> argparse.Namespace:
         default=TEMPERATURE,
         help="Sampling temperature for model calls (default from TEMPERATURE env or 0.0)",
     )
+    parser.add_argument(
+        "--task8-two-pass",
+        action="store_true",
+        help="Run task8_expert_security_review as scan + merge (two LLM calls). "
+        "Also enable with INFERENCE_TASK8_TWO_PASS=1.",
+    )
     return parser.parse_args()
 
 
@@ -700,6 +886,7 @@ def main() -> None:
         output=args.output,
         task_ids=args.task_ids,
         temperature=args.temperature,
+        task8_two_pass=args.task8_two_pass,
     )
     runner.run()
 

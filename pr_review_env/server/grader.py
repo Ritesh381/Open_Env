@@ -5,7 +5,11 @@ Implements deterministic grading with comment-to-issue matching.
 """
 
 import re
-from typing import List, Dict, Any, Set, Tuple
+from typing import List, Dict, Any, Set, Tuple, Optional
+
+import numpy as np
+from scipy.optimize import linear_sum_assignment
+
 from ..models import (
     Action,
     InlineComment,
@@ -54,6 +58,24 @@ class ReviewGrader:
             "authorize": {"authorize", "authz", "authorization", "permission", "rbac", "acl"},
             "pii": {"pii", "personal", "sensitive", "ssn", "email", "phone"},
             "path": {"path", "filepath", "directory", "tmp", "tempfile", "symlink"},
+            # frontend / DVR / browser
+            "leak": {"leak", "leaks", "oom", "gc", "footprint"},
+            "blob": {"blob", "chunks", "chunk", "webm", "mediarecorder", "concatenate"},
+            "observer": {"observer", "mutationobserver", "mutation", "childlist"},
+            "subtree": {"subtree", "descendant", "layout", "reflow", "spa"},
+            # JWT / crypto
+            "algorithm": {"algorithm", "algorithms", "hs256", "none", "jwk", "signature"},
+            "jti": {"jti", "jwe", "kid", "nonce"},
+            # money / types
+            "decimal": {"decimal", "currency", "money"},
+            "float": {"float", "rounding", "precision"},
+            # Redis / concurrency
+            "incr": {"incr", "increment", "lost", "race"},
+            "atomic": {"atomic", "lua", "transaction", "compare"},
+            # sessions
+            "md5": {"md5", "weak", "guessable", "predictable"},
+            "fixation": {"fixation", "regenerate", "rotation", "existing"},
+            "scan": {"scan", "scan_iter", "keys", "pattern"},
         }
 
     def grade_review(
@@ -74,12 +96,17 @@ class ReviewGrader:
             ReviewFeedback with metrics
         """
         difficulty = str(task_config.get("difficulty", "medium")).lower()
+        line_tol = int(task_config.get("grader_line_tolerance", self.line_tolerance))
+        thr_override = task_config.get("match_threshold_override")
+        thr_override_f = float(thr_override) if thr_override is not None else None
 
         # Match comments to ground truth issues
         matches, unmatched_comments, unmatched_issues = self._match_comments_to_issues(
             action.inline_comments,
             ground_truth.issues,
-            difficulty=difficulty
+            difficulty=difficulty,
+            line_tolerance=line_tol,
+            match_threshold_override=thr_override_f,
         )
 
         # Calculate metrics
@@ -100,7 +127,7 @@ class ReviewGrader:
         # Calculate weighted score
         weights = task_config.get("grading_weights", {})
         score = self._calculate_weighted_score(
-            precision, recall, coverage, weights
+            precision, recall, coverage, severity_alignment, weights
         )
 
         # Difficulty-sensitive penalties: hard tasks punish loose findings more.
@@ -142,73 +169,81 @@ class ReviewGrader:
         self,
         comments: List[InlineComment],
         issues: List[GroundTruthIssue],
-        difficulty: str = "medium"
+        difficulty: str = "medium",
+        line_tolerance: Optional[int] = None,
+        match_threshold_override: Optional[float] = None,
     ) -> Tuple[List[Dict[str, Any]], List[InlineComment], List[GroundTruthIssue]]:
         """
-        Match comments to ground truth issues.
+        Match comments to ground truth issues via max-weight bipartite assignment.
 
         Returns:
             (matches, unmatched_comments, unmatched_issues)
-            matches: List of {comment, issue, severity_match_score}
+            matches: List of {comment, issue, match_score, severity_match_score}
         """
-        matched_issues: Set[int] = set()
-        matched_comments: Set[int] = set()
+        tol = self.line_tolerance if line_tolerance is None else int(line_tolerance)
+        threshold = (
+            float(match_threshold_override)
+            if match_threshold_override is not None
+            else self._difficulty_match_threshold(difficulty)
+        )
+
+        c_count = len(comments)
+        i_count = len(issues)
+        if c_count == 0:
+            return [], [], list(issues)
+        if i_count == 0:
+            return [], list(comments), []
+
+        # cost[c, j] minimized; real issue cols minimize -score; dummy cols cost 0 (unmatched comment)
+        inf = 1e6
+        dummy_cols = c_count
+        cols = i_count + dummy_cols
+        cost = np.zeros((c_count, cols), dtype=np.float64)
+        score_matrix = np.zeros((c_count, i_count), dtype=np.float64)
+
+        for c in range(c_count):
+            for i in range(i_count):
+                s = self._compute_match_score(comments[c], issues[i], line_tolerance=tol)
+                score_matrix[c, i] = s
+                if s > threshold:
+                    cost[c, i] = -float(s)
+                else:
+                    cost[c, i] = inf
+            for k in range(dummy_cols):
+                cost[c, i_count + k] = 0.0
+
+        row_ind, col_ind = linear_sum_assignment(cost)
+
+        matched_comment_idx: Set[int] = set()
+        matched_issue_idx: Set[int] = set()
         matches: List[Dict[str, Any]] = []
 
-        threshold = self._difficulty_match_threshold(difficulty)
-
-        # Process comments with fewest viable issues first to reduce greedy order bias.
-        flex_order: List[Tuple[int, int]] = []
-        for comment_idx, comment in enumerate(comments):
-            viable = 0
-            for issue in issues:
-                if self._compute_match_score(comment, issue) > threshold:
-                    viable += 1
-            flex_order.append((viable, comment_idx))
-        flex_order.sort(key=lambda x: (x[0], x[1]))
-
-        for _, comment_idx in flex_order:
-            comment = comments[comment_idx]
-            best_match_idx = None
-            best_match_score = 0.0
-
-            for issue_idx, issue in enumerate(issues):
-                if issue_idx in matched_issues:
-                    continue
-
-                match_score = self._compute_match_score(comment, issue)
-
-                if match_score > best_match_score and match_score > threshold:
-                    best_match_score = match_score
-                    best_match_idx = issue_idx
-
-            if best_match_idx is not None:
-                matched_comments.add(comment_idx)
-                matched_issues.add(best_match_idx)
+        for r, j in zip(row_ind, col_ind):
+            if j < i_count and cost[r, j] < inf * 0.5:
+                match_score = float(score_matrix[r, j])
+                iss = issues[j]
+                com = comments[r]
                 matches.append({
-                    "comment": comment,
-                    "issue": issues[best_match_idx],
-                    "match_score": best_match_score,
+                    "comment": com,
+                    "issue": iss,
+                    "match_score": match_score,
                     "severity_match_score": self._severity_match_score(
-                        comment.severity, issues[best_match_idx].severity
-                    )
+                        com.severity, iss.severity
+                    ),
                 })
+                matched_comment_idx.add(r)
+                matched_issue_idx.add(j)
 
-        unmatched_comments = [
-            c for idx, c in enumerate(comments)
-            if idx not in matched_comments
-        ]
-        unmatched_issues = [
-            i for idx, i in enumerate(issues)
-            if idx not in matched_issues
-        ]
+        unmatched_comments = [comments[idx] for idx in range(c_count) if idx not in matched_comment_idx]
+        unmatched_issues = [issues[idx] for idx in range(i_count) if idx not in matched_issue_idx]
 
         return matches, unmatched_comments, unmatched_issues
 
     def _compute_match_score(
         self,
         comment: InlineComment,
-        issue: GroundTruthIssue
+        issue: GroundTruthIssue,
+        line_tolerance: Optional[int] = None,
     ) -> float:
         """
         Compute how well a comment matches an issue.
@@ -226,10 +261,11 @@ class ReviewGrader:
 
         score += 0.3  # File match
 
+        tol = self.line_tolerance if line_tolerance is None else int(line_tolerance)
         # Line proximity (±tolerance)
         line_distance = abs(comment.line_number - issue.line)
-        if line_distance <= self.line_tolerance:
-            proximity_score = 1.0 - (line_distance / (self.line_tolerance + 1))
+        if line_distance <= tol:
+            proximity_score = 1.0 - (line_distance / (tol + 1))
             score += 0.4 * proximity_score
         else:
             return 0.0  # Too far, no match
@@ -374,20 +410,27 @@ class ReviewGrader:
         precision: float,
         recall: float,
         coverage: float,
-        weights: Dict[str, float]
+        severity_alignment: float,
+        weights: Dict[str, float],
     ) -> float:
-        """Calculate weighted score from precision, recall, and coverage only.
+        """Weighted score from precision, recall, coverage, and severity alignment.
 
-        Task JSON may still include a ``severity`` grading weight; it is ignored.
-        Remaining weights are renormalized so a perfect match still yields 1.0.
+        Weights are taken from task JSON (``grading_weights``) and renormalized
+        so a perfect match on all included components yields 1.0.
         """
         wp = float(weights.get("precision", 0.3))
         wr = float(weights.get("recall", 0.5))
         wc = float(weights.get("coverage", 0.0))
-        denom = wp + wr + wc
+        ws = float(weights.get("severity", 0.0))
+        denom = wp + wr + wc + ws
         if denom <= 0:
             return 0.0
-        return (wp * precision + wr * recall + wc * coverage) / denom
+        return (
+            wp * precision
+            + wr * recall
+            + wc * coverage
+            + ws * severity_alignment
+        ) / denom
 
     def _apply_decision_penalties(
         self,

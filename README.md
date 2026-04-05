@@ -184,6 +184,20 @@ Agents observe the PR state without seeing ground truth:
 - Download redirect without ownership checks
 - **Min passing score**: 0.82
 
+### Task 7: Live Stream / DVR Recorder (Hard)
+**Focus**: Frontend performance and memory in a JS DVR-style recorder
+- Blob construction and hot-path memory use
+- `MutationObserver` cost with `subtree: true` in large SPAs
+- Object URL lifecycle (`createObjectURL` / `revokeObjectURL`)
+- **Min passing score**: 0.8
+
+### Task 8: Expert Security & Correctness (Hard)
+**Focus**: JWT hardening, payment correctness, Redis rate limiting, session lifecycle
+- Algorithm/signature choices, auth decorator behavior, idempotency and row locking
+- Atomic Redis counters vs lost updates
+- Predictable session identifiers and fixation/regeneration semantics
+- **Min passing score**: 0.8
+
 ---
 
 ## 🏆 Grading System
@@ -192,9 +206,10 @@ Agents observe the PR state without seeing ground truth:
 
 Comments are matched to ground truth issues using:
 1. **File path match** (required)
-2. **Line proximity** (±2 lines tolerance)
-3. **Category alignment** (exact or overlapping)
-4. **Keyword overlap** (issue keywords in comment)
+2. **Line proximity** (±2 lines tolerance; optional per-task `grader_line_tolerance` in task JSON)
+3. **Category alignment** (exact)
+4. **Keyword overlap** (issue keywords in comment, with deterministic synonym expansion)
+5. **Global assignment**: max-weight bipartite matching between comments and issues (each comment/issue used at most once), so pairing is order-stable and avoids unnecessary false positives from greedy ordering.
 
 ### Metrics
 
@@ -208,14 +223,19 @@ Comments are matched to ground truth issues using:
 
 ### Weighted Score
 
+Each task supplies `grading_weights` (`precision`, `recall`, `coverage`, `severity`). The grader **renormalizes** the non-zero weights so a perfect review still scores `1.0`:
+
 ```python
+denom = w_precision + w_recall + w_coverage + w_severity
 score = (
-    0.3 * precision +
-    0.5 * recall +
-    0.2 * severity_alignment +
-    0.0 * coverage  # Task-dependent
-)
+    w_precision * precision
+    + w_recall * recall
+    + w_coverage * coverage
+    + w_severity * severity_alignment
+) / denom
 ```
+
+`severity_alignment` is the mean per-match severity score (exact = 1.0, one level off = 0.5, else 0.0). Tasks that omit `severity` behave like `w_severity = 0`.
 
 ### Decision Penalties
 
@@ -339,6 +359,11 @@ export OPENAI_API_KEY="your-openai-api-key"
 python3 inference.py \
   --env-url http://localhost:8000 \
   --output inference_results.json
+
+# Optional: richer prompts / task8 quality (see inference.py docstrings)
+# export PROMPT_MAX_HUNK_CHARS=12000   # per-file hunk character budget in the LLM prompt
+# export INFERENCE_TASK8_TWO_PASS=1    # task8: scan pass + merge pass (two API calls)
+# python3 inference.py --task8-two-pass   # same as INFERENCE_TASK8_TWO_PASS for task8 only
 ```
 
 **Results (3-task sample before expansion)**:
