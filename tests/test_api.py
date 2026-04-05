@@ -18,11 +18,12 @@ def test_required_endpoints():
     tasks = client.get("/tasks")
     assert tasks.status_code == 200
     body = tasks.json()
-    assert body["total"] >= 6
+    assert body["total"] >= 7
     task_ids = {t["task_id"] for t in body["tasks"]}
     assert "task4_session_auth_medium" in task_ids
     assert "task5_async_pipeline_hard" in task_ids
     assert "task6_data_export_hard" in task_ids
+    assert "task7_pr_review_dvr_recorder" in task_ids
     assert "action_schema" in body
 
     reset = client.post("/reset", json={"task_id": "task1_security_basic"})

@@ -40,6 +40,8 @@ TASK_COMMENT_BUDGET: Dict[str, int] = {
     "task4_session_auth_medium": 7,
     "task5_async_pipeline_hard": 8,
     "task6_data_export_hard": 8,
+    "task7_pr_review_dvr_recorder": 8,
+    "task8_expert_security_review": 15
 }
 
 SYSTEM_PROMPT = """You are an expert software code reviewer.
@@ -132,6 +134,23 @@ def _task_hint(task_id: str) -> str:
             "Focus: secure data export workflows. "
             "Check authorization/tenant scoping, PII access controls, temp file safety, "
             "download ownership checks, and redirect/path traversal risks."
+        )
+    if task_id == "task7_pr_review_dvr_recorder":
+        return (
+            "Focus: live stream / DVR recorder frontend (JavaScript). "
+            "Look for performance and memory issues: Blob/MediaRecorder usage, "
+            "object URL lifecycle (revokeObjectURL), buffering recorded chunks, "
+            "MutationObserver scope and subtree cost in SPAs, and seek/DVR hot paths."
+        )
+    if task_id == "task8_expert_security_review":
+        return (
+            "Focus: expert security and correctness across JWT auth, payments, Redis rate limiting, and session lifecycle. "
+            "Audit JWT verification (allowed algorithms, signature requirements, missing/invalid token handling), "
+            "decorator enforcement (reject unauthenticated requests), and unpredictable token/session IDs. "
+            "For payments: safe money types, row locking / races on all updated balances, missing rows, and real idempotency. "
+            "For Redis: atomic check-and-increment (avoid lost updates under concurrency). "
+            "For sessions: fixation on login (regenerate IDs), weak or guessable session identifiers, "
+            "and consistency between how keys are written vs scanned or invalidated."
         )
     return ""
 

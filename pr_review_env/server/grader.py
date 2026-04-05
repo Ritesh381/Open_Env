@@ -100,16 +100,14 @@ class ReviewGrader:
         # Calculate weighted score
         weights = task_config.get("grading_weights", {})
         score = self._calculate_weighted_score(
-            precision, recall, coverage, severity_alignment, weights
+            precision, recall, coverage, weights
         )
 
         # Difficulty-sensitive penalties: hard tasks punish loose findings more.
         score = self._apply_difficulty_penalties(
             score=score,
             false_positives=false_positives,
-            severity_alignment=severity_alignment,
             difficulty=difficulty,
-            matches_count=len(matches)
         )
 
         # Apply decision penalties
@@ -267,19 +265,13 @@ class ReviewGrader:
         self,
         score: float,
         false_positives: int,
-        severity_alignment: float,
         difficulty: str,
-        matches_count: int
     ) -> float:
         """Apply deterministic strictness based on task difficulty."""
         if difficulty == "hard":
             score -= min(0.28, false_positives * 0.07)
-            if matches_count > 0:
-                score -= (1.0 - severity_alignment) * 0.14
         elif difficulty == "medium":
             score -= min(0.12, false_positives * 0.025)
-            if matches_count > 0:
-                score -= (1.0 - severity_alignment) * 0.04
         else:
             # Keep easy tasks permissive.
             score -= min(0.05, false_positives * 0.01)
@@ -382,17 +374,20 @@ class ReviewGrader:
         precision: float,
         recall: float,
         coverage: float,
-        severity_alignment: float,
         weights: Dict[str, float]
     ) -> float:
-        """Calculate weighted score from components."""
-        score = (
-            weights.get("precision", 0.3) * precision +
-            weights.get("recall", 0.5) * recall +
-            weights.get("severity", 0.2) * severity_alignment +
-            weights.get("coverage", 0.0) * coverage
-        )
-        return score
+        """Calculate weighted score from precision, recall, and coverage only.
+
+        Task JSON may still include a ``severity`` grading weight; it is ignored.
+        Remaining weights are renormalized so a perfect match still yields 1.0.
+        """
+        wp = float(weights.get("precision", 0.3))
+        wr = float(weights.get("recall", 0.5))
+        wc = float(weights.get("coverage", 0.0))
+        denom = wp + wr + wc
+        if denom <= 0:
+            return 0.0
+        return (wp * precision + wr * recall + wc * coverage) / denom
 
     def _apply_decision_penalties(
         self,

@@ -1,0 +1,91 @@
+{
+    "task_id": "task7_pr_review_dvr_recorder",
+    "name": "Live Stream Recorder Code Review",
+    "difficulty": "hard",
+    "min_passing_score": 0.8,
+    "grading_weights": {
+      "precision": 0.4,
+      "recall": 0.35,
+      "severity": 0.2,
+      "coverage": 0.05
+    },
+    "pr_scenario": {
+      "pr_id": "PR-10",
+      "metadata": {
+        "title": "core implementation for dvr-like recorder",
+        "description": "Replaces the existing video player with live video-recorder/playback, enabling pause and resume in classes. The PR includes a complete basic recording framework, Agora bridge integration, and DVR state management.",
+        "author": "purposeno968-ui",
+        "target_branch": "main",
+        "files_changed": 10,
+        "additions_total": 2080,
+        "deletions_total": 1
+      },
+      "files": [
+        {
+          "path": "content/features/liveStreamRecorder/liveStreamRecorder.js",
+          "language": "javascript",
+          "additions": [
+            "71:     const observer = new MutationObserver(() => {",
+            "72:       clearTimeout(_injectDebounceTimer);",
+            "73:       _injectDebounceTimer = setTimeout(() => {",
+            "74:         if (this.enabled && !this.isActive) this.checkAndInject();",
+            "75:       }, 300);",
+            "76:     });",
+            "77: ",
+            "78:     // Scope observer to app root instead of entire body if possible",
+            "79:     const appRoot =",
+            "80:       document.getElementById(\"root\") ||",
+            "81:       document.querySelector(\".application-layout\") ||",
+            "82:       document.body;",
+            "83:     observer.observe(appRoot, { childList: true, subtree: true });",
+            "628:     // Create blob from recorded chunks",
+            "629:     const blob = new Blob(this.recordedChunks, { type: \"video/webm\" });",
+            "630: ",
+            "631:     // Revoke previous URL to prevent memory leak",
+            "632:     if (this.dvrBlobUrl) {",
+            "633:       URL.revokeObjectURL(this.dvrBlobUrl);",
+            "634:     }",
+            "635:     this.dvrBlobUrl = URL.createObjectURL(blob);"
+          ],
+          "deletions": [],
+          "context": [
+            "68:     // Observe DOM mutations for SPA navigation, debounced to prevent memory/CPU spikes",
+            "626:     this.isDVRLoading = true;",
+            "627: "
+          ],
+          "hunks": [
+            {
+              "start_line": 71,
+              "end_line": 83,
+              "content": "    const observer = new MutationObserver(() => {\n      clearTimeout(_injectDebounceTimer);\n      _injectDebounceTimer = setTimeout(() => {\n        if (this.enabled && !this.isActive) this.checkAndInject();\n      }, 300);\n    });\n\n    // Scope observer to app root instead of entire body if possible\n    const appRoot =\n      document.getElementById(\"root\") ||\n      document.querySelector(\".application-layout\") ||\n      document.body;\n    observer.observe(appRoot, { childList: true, subtree: true });"
+            },
+            {
+              "start_line": 628,
+              "end_line": 635,
+              "content": "    // Create blob from recorded chunks\n    const blob = new Blob(this.recordedChunks, { type: \"video/webm\" });\n\n    // Revoke previous URL to prevent memory leak\n    if (this.dvrBlobUrl) {\n      URL.revokeObjectURL(this.dvrBlobUrl);\n    }\n    this.dvrBlobUrl = URL.createObjectURL(blob);"
+            }
+          ]
+        }
+      ],
+      "ground_truth": {
+        "issues": [
+          {
+            "file": "content/features/liveStreamRecorder/liveStreamRecorder.js",
+            "line": 629,
+            "severity": "critical",
+            "category": "performance",
+            "description": "Massive memory leak - creating a new Blob from all recordedChunks every time the user seeks or enters DVR mode. Forces the browser to concatenate gigabytes of data into a brand new Blob in memory, causing massive CPU spikes and eventually crashing the tab.",
+            "cwe": "CWE-400"
+          },
+          {
+            "file": "content/features/liveStreamRecorder/liveStreamRecorder.js",
+            "line": 83,
+            "severity": "warning",
+            "category": "performance",
+            "description": "Global MutationObserver - observing the entire document.body (or appRoot) with { childList: true, subtree: true } in a heavy React SPA causing hundreds of layout calculations per minute. The observer should be scoped to a narrower container instead.",
+            "cwe": "CWE-400"
+          }
+        ]
+      }
+    }
+  }
