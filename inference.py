@@ -12,6 +12,7 @@ import json
 import os
 import re
 from statistics import mean
+import time
 from typing import Any, Dict, List, Optional, Union
 
 import requests
@@ -211,11 +212,17 @@ def _turn_focus_instruction(turn_index: int, total_turns: int, task_id: str) -> 
             )
         if turn_index == 1:
             return (
-                "Turn strategy: focus on correctness/logic/concurrency findings not already reported."
+                "Turn strategy: focus on correctness/logic/concurrency findings not yet covered. "
+                "You may refine previously-reported areas only when adding materially new evidence "
+                "(different line/file or a clearer root cause/severity)."
             )
-        return "Turn strategy: focus on remaining gaps (performance, maintainability, and tests) not already reported."
+        return (
+            "Turn strategy: focus on remaining gaps (performance, maintainability, and tests). "
+            "Prefer net-new findings, but allow meaningful refinements with stronger evidence."
+        )
     return (
-        "Final turn strategy: provide only net-new findings and finalize with a concise decision summary."
+        "Final turn strategy: prioritize net-new findings and finalize with a concise decision summary. "
+        "If needed, include a refined finding only when it materially improves precision/severity alignment."
     )
 
 
@@ -240,10 +247,12 @@ def build_prompt(
     turn_index: int = 0,
     total_turns: int = 1,
     prior_inline: Optional[List[Dict[str, Any]]] = None,
+    uncovered_focus: Optional[List[str]] = None,
 ) -> str:
     md = pr_state.get("metadata", {})
     hint = _task_hint(task_id)
     prior_inline = prior_inline or []
+    uncovered_focus = uncovered_focus or []
     lines = [
         f"Task ID: {task_id}",
         f"Turn: {turn_index + 1}/{total_turns}",
@@ -296,9 +305,18 @@ def build_prompt(
 
     prior_lines = _format_prior_findings(prior_inline)
     if prior_lines:
-        lines.append("\nPreviously submitted inline findings (do NOT repeat these root causes):")
+        lines.append("\nPreviously submitted inline findings (avoid trivial repeats):")
         lines.extend(prior_lines)
-        lines.append("Only add net-new issues in this turn.")
+        lines.append(
+            "Prioritize net-new issues in this turn. "
+            "You may include a refinement only if it adds materially new evidence "
+            "(new line/file, clearer exploit path, or better severity/category)."
+        )
+
+    if uncovered_focus:
+        lines.append("\nCoverage targets still missing this turn:")
+        lines.extend(f"- {f}" for f in uncovered_focus)
+        lines.append("Try to add at least one high-confidence finding from missing targets if evidence exists in diff.")
 
     lines.append("\nReturn JSON only. No markdown.")
     return "\n".join(lines)
@@ -376,6 +394,13 @@ def parse_json_response(content: str) -> Dict[str, Any]:
     if last_err is not None:
         raise last_err
     raise json.JSONDecodeError("No JSON object found in model output", raw, 0)
+
+
+def emit_log(tag: str, fields: Dict[str, Any]) -> None:
+    """
+    Emit structured stdout logs in required validator-friendly format.
+    """
+    print(f"[{tag}] {json.dumps(fields, ensure_ascii=False, separators=(',', ':'))}", flush=True)
 
 
 def _parse_line_number(value: Any) -> Optional[int]:
@@ -599,10 +624,38 @@ def _cross_turn_key(comment: Dict[str, Any]) -> tuple:
     text_sig = " ".join(text_tokens[:10])
     return (
         str(comment.get("file_path", "")).strip(),
-        int(comment.get("line_number", 0)),
+        int(comment.get("line_number", 0)) // 3,
         str(comment.get("category", "")).strip(),
         text_sig,
     )
+
+
+def _infer_coverage_targets(task_id: str, prior_inline: List[Dict[str, Any]]) -> List[str]:
+    text = " ".join(
+        f"{c.get('comment','')} {c.get('suggested_fix','')} {c.get('category','')}"
+        for c in (prior_inline or [])
+    ).lower()
+    if task_id == "task8_expert_security_review":
+        targets = [
+            ("jwt_auth", ("jwt", "token", "algorithm", "signature", "claim", "decorator")),
+            ("payment_idempotency", ("payment", "balance", "idempot", "row lock", "transaction", "decimal")),
+            ("redis_rate_limit_atomicity", ("redis", "rate", "incr", "atomic", "lua", "lost update")),
+            ("session_lifecycle", ("session", "fixation", "regenerate", "invalidate", "sid")),
+        ]
+    elif task_id == "task5_async_pipeline_hard":
+        targets = [
+            ("webhook_authenticity", ("webhook", "signature", "hmac")),
+            ("replay_protection", ("replay", "nonce", "timestamp")),
+            ("idempotency_atomicity", ("idempot", "dedupe", "atomic", "race", "transaction")),
+        ]
+    else:
+        return []
+
+    missing: List[str] = []
+    for name, keys in targets:
+        if not any(k in text for k in keys):
+            missing.append(name)
+    return missing
 
 
 def normalize_action(raw_action: Dict[str, Any], max_inline_comments: int = 8) -> Dict[str, Any]:
@@ -722,6 +775,7 @@ class InferenceRunner:
         temperature: float = TEMPERATURE,
         task8_two_pass: bool = False,
         turns: int = 5,
+        max_runtime_seconds: int = 0,
     ) -> None:
         self.env_url = env_url.rstrip("/")
         self.output = output
@@ -729,6 +783,7 @@ class InferenceRunner:
         self.temperature = temperature
         self.task8_two_pass = bool(task8_two_pass)
         self.turns = max(1, min(int(turns), 5))
+        self.max_runtime_seconds = max(0, int(max_runtime_seconds))
         self.http = requests.Session()
         self.client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
         self.task_thresholds: Dict[str, float] = {}
@@ -762,6 +817,10 @@ class InferenceRunner:
             turn_index=turn_index,
             total_turns=total_turns,
             prior_inline=prior_inline,
+            uncovered_focus=_infer_coverage_targets(
+                "task8_expert_security_review",
+                prior_inline or [],
+            ),
         )
         max_tokens_try = MAX_TOKENS
         last_err: Optional[Union[json.JSONDecodeError, ValueError]] = None
@@ -817,16 +876,28 @@ class InferenceRunner:
                 )
             except (json.JSONDecodeError, ValueError) as e:
                 last_err = e
-                print(
-                    f"Warning: task8 merge JSON parse failed "
-                    f"(attempt {attempt + 1}/3, max_tokens={max_tokens_try}): {e}",
-                    flush=True,
+                emit_log(
+                    "STEP",
+                    {
+                        "event": "warning",
+                        "task_id": "task8_expert_security_review",
+                        "warning_type": "json_parse",
+                        "phase": "task8_merge",
+                        "attempt": attempt + 1,
+                        "max_tokens": max_tokens_try,
+                        "message": str(e),
+                    },
                 )
                 max_tokens_try = min(max(max_tokens_try * 2, 2048), 8192)
 
-        print(
-            f"Warning: task8 two-pass merge failed, falling back to single-pass: {last_err}",
-            flush=True,
+        emit_log(
+            "STEP",
+            {
+                "event": "warning",
+                "task_id": "task8_expert_security_review",
+                "warning_type": "task8_two_pass_fallback",
+                "message": str(last_err),
+            },
         )
         return self._review_with_model_single(
             pr_state,
@@ -855,6 +926,7 @@ class InferenceRunner:
             turn_index=turn_index,
             total_turns=total_turns,
             prior_inline=prior_inline,
+            uncovered_focus=_infer_coverage_targets(task_id, prior_inline or []),
         )
         max_tokens_try = MAX_TOKENS
         last_err: Optional[Union[json.JSONDecodeError, ValueError]] = None
@@ -881,16 +953,28 @@ class InferenceRunner:
                 )
             except (json.JSONDecodeError, ValueError) as e:
                 last_err = e
-                print(
-                    f"Warning: model JSON parse failed for {task_id} "
-                    f"(attempt {attempt + 1}/3, max_tokens={max_tokens_try}): {e}",
-                    flush=True,
+                emit_log(
+                    "STEP",
+                    {
+                        "event": "warning",
+                        "task_id": task_id,
+                        "warning_type": "json_parse",
+                        "phase": "model_completion",
+                        "attempt": attempt + 1,
+                        "max_tokens": max_tokens_try,
+                        "message": str(e),
+                    },
                 )
                 max_tokens_try = min(max(max_tokens_try * 2, 2048), 8192)
 
-        print(
-            f"Warning: submitting empty review for {task_id} after JSON failures: {last_err}",
-            flush=True,
+        emit_log(
+            "STEP",
+            {
+                "event": "warning",
+                "task_id": task_id,
+                "warning_type": "empty_fallback_submission",
+                "message": str(last_err),
+            },
         )
         fallback: Dict[str, Any] = {
             "task_id": task_id,
@@ -945,12 +1029,36 @@ class InferenceRunner:
         if not task_ids:
             raise RuntimeError("No tasks discovered. Ensure /tasks endpoint is available.")
 
-        print(f"Found {len(task_ids)} task(s): {', '.join(task_ids)}")
-        print(f"Using up to {self.turns} turn(s) per task")
+        run_start = time.monotonic()
+        emit_log(
+            "START",
+            {
+                "event": "run",
+                "task_count": len(task_ids),
+                "task_ids": task_ids,
+                "turns": self.turns,
+                "max_runtime_seconds": self.max_runtime_seconds,
+            },
+        )
 
         results: Dict[str, Any] = {}
+        stopped_early = False
         for task_id in task_ids:
-            print(f"\n{'=' * 60}\nEvaluating {task_id}\n{'=' * 60}")
+            elapsed = time.monotonic() - run_start
+            if self.max_runtime_seconds > 0 and elapsed >= self.max_runtime_seconds:
+                stopped_early = True
+                emit_log(
+                    "END",
+                    {
+                        "event": "run_budget_reached",
+                        "elapsed_seconds": round(elapsed, 3),
+                        "max_runtime_seconds": self.max_runtime_seconds,
+                        "last_completed_task_count": len(results),
+                    },
+                )
+                break
+
+            emit_log("START", {"event": "task", "task_id": task_id})
             reset_resp = self.http.post(
                 f"{self.env_url}/reset",
                 json={"task_id": task_id},
@@ -983,16 +1091,19 @@ class InferenceRunner:
                     deduped_inline.append(c)
                 action["inline_comments"] = deduped_inline
                 cumulative_inline.extend(deduped_inline)
-                print(
-                    f"Turn {turn_idx + 1}/{self.turns} | "
-                    f"generated {len(action['inline_comments'])} inline comments | "
-                    f"submit={action.get('submit', False)}"
-                )
                 decision = action.get("decision")
-                if isinstance(decision, dict):
-                    print(f"Decision: {decision.get('decision', 'comment')}")
-                else:
-                    print("Decision: None (intermediate turn)")
+                emit_log(
+                    "STEP",
+                    {
+                        "event": "turn",
+                        "task_id": task_id,
+                        "turn": turn_idx + 1,
+                        "total_turns": self.turns,
+                        "generated_inline_comments": len(action["inline_comments"]),
+                        "submit": bool(action.get("submit", False)),
+                        "decision": decision.get("decision") if isinstance(decision, dict) else None,
+                    },
+                )
 
                 step_resp = self.http.post(
                     f"{self.env_url}/step",
@@ -1019,10 +1130,16 @@ class InferenceRunner:
                 "false_positives": feedback.get("false_positives", 0),
                 "false_negatives": feedback.get("false_negatives", 0),
             }
-            print(
-                f"Score: {score:.2f} | Passed: {'yes' if passed else 'no'} | "
-                f"Precision: {results[task_id]['precision']:.2f} | "
-                f"Recall: {results[task_id]['recall']:.2f}"
+            emit_log(
+                "END",
+                {
+                    "event": "task",
+                    "task_id": task_id,
+                    "score": score,
+                    "passed": passed,
+                    "precision": results[task_id]["precision"],
+                    "recall": results[task_id]["recall"],
+                },
             )
 
         avg = mean([r["score"] for r in results.values()]) if results else 0.0
@@ -1036,11 +1153,22 @@ class InferenceRunner:
             "results": results,
             "average_score": avg,
             "turns": self.turns,
+            "max_runtime_seconds": self.max_runtime_seconds,
+            "stopped_early": stopped_early,
         }
         with open(self.output, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
-        print(f"\nAverage score: {avg:.2f}")
-        print(f"Saved results to {self.output}")
+        emit_log(
+            "END",
+            {
+                "event": "run",
+                "average_score": avg,
+                "completed_tasks": len(results),
+                "total_tasks": len(task_ids),
+                "stopped_early": stopped_early,
+                "output": self.output,
+            },
+        )
         return payload
 
 
@@ -1085,6 +1213,12 @@ def parse_args() -> argparse.Namespace:
         default=3,
         help="Max turns per task episode (default: 3).",
     )
+    parser.add_argument(
+        "--max-runtime-seconds",
+        type=int,
+        default=0,
+        help="Optional runtime budget for the full run; 0 disables limit.",
+    )
     return parser.parse_args()
 
 
@@ -1098,6 +1232,7 @@ def main() -> None:
         temperature=args.temperature,
         task8_two_pass=args.task8_two_pass,
         turns=args.turns,
+        max_runtime_seconds=args.max_runtime_seconds,
     )
     runner.run()
 

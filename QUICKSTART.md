@@ -101,7 +101,14 @@ export OPENAI_API_KEY="your-openai-api-key"
 
 # Run inference evaluation against local env server
 python3 inference.py --env-url http://localhost:8000 --output inference_results.json
+
+# Optional runtime/quality knobs
+# --turns 3                  # default: 3 (allowed: 1..5)
+# --task8-two-pass           # default: enabled (use --no-task8-two-pass to disable)
+# --max-runtime-seconds 1200 # optional guard for infra time budgets
 ```
+
+`inference.py` emits structured logs using `[START]`, `[STEP]`, and `[END]` tags.
 
 ### 5. Build and Test Docker
 

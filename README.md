@@ -360,11 +360,17 @@ python3 inference.py \
   --env-url http://localhost:8000 \
   --output inference_results.json
 
+# Optional knobs:
+# --turns 3                  # default: 3 (allowed: 1..5)
+# --task8-two-pass           # default: enabled (use --no-task8-two-pass to disable)
+# --max-runtime-seconds 1200 # optional runtime cap for infra limits
+
 # Optional: richer prompts / task8 quality (see inference.py docstrings)
 # export PROMPT_MAX_HUNK_CHARS=12000   # per-file hunk character budget in the LLM prompt
-# export INFERENCE_TASK8_TWO_PASS=1    # task8: scan pass + merge pass (two API calls)
-# python3 inference.py --task8-two-pass   # same as INFERENCE_TASK8_TWO_PASS for task8 only
+# export INFERENCE_TASK8_TWO_PASS=1    # also enables task8 scan+merge pipeline
 ```
+
+`inference.py` emits structured stdout logs using `[START]`, `[STEP]`, and `[END]` tags for validator compatibility.
 
 **Results (3-task sample before expansion)**:
 | Task | Score | Passed | Precision | Recall |
@@ -463,8 +469,8 @@ pr-review-env/
 │   ├── task1_security_basic.json
 │   ├── task2_quality_logic.json
 │   └── task3_advanced_review.json
-├── baseline/
-│   └── baseline_inference.py     # OpenAI-compatible baseline
+├── inference.py                  # OpenAI-client baseline runner
+├── inference_results.json        # Latest baseline artifact
 ├── tests/
 │   ├── test_environment.py
 │   ├── test_api.py
