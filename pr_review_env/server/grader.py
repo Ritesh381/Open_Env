@@ -21,6 +21,7 @@ from ..models import (
 
 class ReviewGrader:
     """Grades code review actions against ground truth."""
+    SCORE_EPSILON = 1e-6
 
     def __init__(self, line_tolerance: int = 2):
         """
@@ -142,8 +143,8 @@ class ReviewGrader:
             score, action, ground_truth
         )
 
-        # Ensure score is in valid range
-        score = max(0.0, min(1.0, score))
+        # Validator requires strict open interval: 0 < score < 1.
+        score = max(self.SCORE_EPSILON, min(1.0 - self.SCORE_EPSILON, score))
 
         return ReviewFeedback(
             score=score,

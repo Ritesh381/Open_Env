@@ -36,6 +36,8 @@ INFERENCE_TASK8_TWO_PASS = os.getenv("INFERENCE_TASK8_TWO_PASS", "").lower() in 
     "true",
     "yes",
 )
+MODEL_RATE_LIMIT_RETRIES = int(os.getenv("MODEL_RATE_LIMIT_RETRIES", "4"))
+MODEL_RATE_LIMIT_BACKOFF_SECONDS = float(os.getenv("MODEL_RATE_LIMIT_BACKOFF_SECONDS", "1.5"))
 
 VALID_SEVERITIES = {"info", "warning", "error", "critical"}
 VALID_INLINE_CATEGORIES = {
@@ -45,13 +47,14 @@ VALID_GENERAL_CATEGORIES = {"architecture", "approach", "testing", "documentatio
 VALID_DECISIONS = {"approve", "request_changes", "comment"}
 
 TASK_COMMENT_BUDGET: Dict[str, int] = {
-    "task1_security_basic": 4,
-    "task2_quality_logic": 7,
-    "task3_advanced_review": 9,
-    "task4_session_auth_medium": 7,
-    "task5_async_pipeline_hard": 8,
+    "task1_security_basic": 3,
+    "task1_security_basic": 3,
+    "task2_quality_logic": 6,
+    "task3_advanced_review": 8,
+    "task4_session_auth_medium": 5,
+    "task5_async_pipeline_hard": 7,
     "task6_data_export_hard": 8,
-    "task7_pr_review_dvr_recorder": 6,
+    "task7_pr_review_dvr_recorder": 3,
     "task8_expert_security_review": 15
 }
 
@@ -197,6 +200,9 @@ Output ONLY valid JSON:
 Rules:
 - List every plausible issue you see (aim for breadth); a second pass will refine.
 - line_number must match a line prefix from the user diff (integer).
+- file_path must match exactly one changed file path from the user diff.
+- Include high-recall candidates for each area when evidence exists:
+  JWT verification/authz guard, payment correctness/idempotency, Redis atomicity, session lifecycle.
 - No markdown, no prose outside JSON.
 """
 
@@ -658,6 +664,53 @@ def _infer_coverage_targets(task_id: str, prior_inline: List[Dict[str, Any]]) ->
     return missing
 
 
+def _task8_candidates_to_action(candidates: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Convert task8 scan candidates into a valid action payload candidate.
+    This is used as a fallback when merge output is empty/invalid.
+    """
+    inline_comments: List[Dict[str, Any]] = []
+    for cand in candidates or []:
+        if not isinstance(cand, dict):
+            continue
+        file_path = cand.get("file_path")
+        line_number = _parse_line_number(cand.get("line_number"))
+        theme = cand.get("theme")
+        if not isinstance(file_path, str) or not file_path.strip():
+            continue
+        if line_number is None:
+            continue
+        if not isinstance(theme, str) or not theme.strip():
+            continue
+
+        category = str(cand.get("category", "security")).lower()
+        if category not in VALID_INLINE_CATEGORIES:
+            category = "security"
+        severity = str(cand.get("severity", "warning")).lower()
+        if severity not in VALID_SEVERITIES:
+            severity = "warning"
+
+        inline_comments.append(
+            {
+                "file_path": file_path.strip(),
+                "line_number": line_number,
+                "comment": theme.strip(),
+                "category": category,
+                "severity": severity,
+            }
+        )
+
+    return {
+        "task_id": "task8_expert_security_review",
+        "inline_comments": inline_comments,
+        "general_comments": [],
+        "decision": {
+            "decision": "request_changes",
+            "summary": "Potential high-risk issues detected; prioritize security fixes before merge.",
+        },
+    }
+
+
 def normalize_action(raw_action: Dict[str, Any], max_inline_comments: int = 8) -> Dict[str, Any]:
     if not isinstance(raw_action, dict):
         raw_action = {}
@@ -832,6 +885,58 @@ class InferenceRunner:
             return self.task_ids
         return [t["task_id"] for t in tasks if isinstance(t, dict) and t.get("task_id")]
 
+    @staticmethod
+    def _is_retryable_model_error(err: Exception) -> bool:
+        name = err.__class__.__name__
+        text = str(err).lower()
+        return (
+            "ratelimit" in name.lower()
+            or "429" in text
+            or "queue_exceeded" in text
+            or "high traffic" in text
+        )
+
+    def _chat_completion_with_retry(
+        self,
+        *,
+        task_id: str,
+        phase: str,
+        messages: List[Dict[str, str]],
+        max_tokens: int,
+    ) -> Any:
+        last_err: Optional[Exception] = None
+        attempts = max(1, MODEL_RATE_LIMIT_RETRIES + 1)
+        for attempt in range(attempts):
+            try:
+                return self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=messages,
+                    temperature=self.temperature,
+                    max_tokens=max_tokens,
+                    response_format={"type": "json_object"},
+                )
+            except Exception as e:
+                last_err = e
+                if not self._is_retryable_model_error(e) or attempt >= attempts - 1:
+                    raise
+                wait_s = MODEL_RATE_LIMIT_BACKOFF_SECONDS * (2 ** attempt)
+                emit_log(
+                    "STEP",
+                    {
+                        "event": "warning",
+                        "task_id": task_id,
+                        "warning_type": "model_rate_limit_retry",
+                        "phase": phase,
+                        "attempt": attempt + 1,
+                        "max_attempts": attempts,
+                        "wait_seconds": round(wait_s, 2),
+                        "message": str(e)[:300],
+                    },
+                )
+                time.sleep(wait_s)
+        if last_err is not None:
+            raise last_err
+
     def _review_task8_two_pass(
         self,
         pr_state: Dict[str, Any],
@@ -860,15 +965,14 @@ class InferenceRunner:
 
         for attempt in range(2):
             try:
-                scan = self.client.chat.completions.create(
-                    model=self.model_name,
+                scan = self._chat_completion_with_retry(
+                    task_id="task8_expert_security_review",
+                    phase="task8_scan",
                     messages=[
                         {"role": "system", "content": TASK8_SCAN_SYSTEM},
                         {"role": "user", "content": prompt},
                     ],
-                    temperature=self.temperature,
                     max_tokens=min(max_tokens_try, 4096),
-                    response_format={"type": "json_object"},
                 )
                 raw_scan = parse_json_response(scan.choices[0].message.content or "{}")
                 cand = raw_scan.get("candidates")
@@ -888,24 +992,42 @@ class InferenceRunner:
         max_tokens_try = MAX_TOKENS
         for attempt in range(3):
             try:
-                completion = self.client.chat.completions.create(
-                    model=self.model_name,
+                completion = self._chat_completion_with_retry(
+                    task_id="task8_expert_security_review",
+                    phase="task8_merge",
                     messages=[
                         {"role": "system", "content": SYSTEM_PROMPT},
                         {"role": "user", "content": merge_user},
                     ],
-                    temperature=self.temperature,
                     max_tokens=max_tokens_try,
-                    response_format={"type": "json_object"},
                 )
                 content = completion.choices[0].message.content or "{}"
                 raw = parse_json_response(content)
-                return normalize_action_for_turn(
+                action = normalize_action_for_turn(
                     raw,
                     task_id="task8_expert_security_review",
                     budget=budget,
                     finalize=finalize,
                 )
+                # High-recall guardrail: if merge returned no usable findings but scan
+                # had candidates, salvage candidates instead of submitting empty output.
+                if not action.get("inline_comments") and candidates:
+                    emit_log(
+                        "STEP",
+                        {
+                            "event": "warning",
+                            "task_id": "task8_expert_security_review",
+                            "warning_type": "task8_empty_merge_salvage",
+                            "scan_candidates": len(candidates),
+                        },
+                    )
+                    return normalize_action_for_turn(
+                        _task8_candidates_to_action(candidates),
+                        task_id="task8_expert_security_review",
+                        budget=budget,
+                        finalize=finalize,
+                    )
+                return action
             except (json.JSONDecodeError, ValueError) as e:
                 last_err = e
                 emit_log(
@@ -965,15 +1087,14 @@ class InferenceRunner:
 
         for attempt in range(3):
             try:
-                completion = self.client.chat.completions.create(
-                    model=self.model_name,
+                completion = self._chat_completion_with_retry(
+                    task_id=task_id,
+                    phase="model_completion",
                     messages=[
                         {"role": "system", "content": SYSTEM_PROMPT},
                         {"role": "user", "content": prompt},
                     ],
-                    temperature=self.temperature,
                     max_tokens=max_tokens_try,
-                    response_format={"type": "json_object"},
                 )
                 content = completion.choices[0].message.content or "{}"
                 raw = parse_json_response(content)
